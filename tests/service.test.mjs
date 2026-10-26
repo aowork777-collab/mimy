@@ -3,53 +3,93 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import ts from 'typescript';
 import fs from 'node:fs';
-const sql=new DatabaseSync(':memory:');
-for(const f of fs.readdirSync('drizzle').filter(f=>f.endsWith('.sql')))sql.exec(fs.readFileSync('drizzle/'+f,'utf8'));
-const db={
- prepare(text){
-  return {bind(...args){
-   const s=()=>sql.prepare(text);
-   return {
-    async run(){s().run(...args);return{}},
-    async first(){return s().get(...args)||null},
-    async all(){return{results:s().all(...args)}}
-   };
-  }};
- },
- async batch(stmts){sql.exec('BEGIN');try{const r=[];for(const s of stmts)r.push(await s.run());sql.exec('COMMIT');return r;}catch(e){sql.exec('ROLLBACK');throw e;}}
-};
 const compile=s=>ts.transpileModule(s,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
-const catalog='data:text/javascript;base64,'+Buffer.from(compile(fs.readFileSync('lib/catalog.ts','utf8'))).toString('base64');
-globalThis.__TEST_DB=db;
-let source=fs.readFileSync('app/api/service/route.ts','utf8').replace("import {env} from 'cloudflare:workers';","const env={DB:globalThis.__TEST_DB};").replace("'../../../lib/catalog'",JSON.stringify(catalog));
-const api=await import('data:text/javascript;base64,'+Buffer.from(compile(source)).toString('base64'));
-async function req(body,owner='alice',origin='https://test.local'){const r=new Request('https://test.local/api/service',{method:body?'POST':'GET',headers:{...(owner?{'oai-authenticated-user-id':owner}:{}),origin,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const res=await (body?api.POST(r):api.GET(r));return{status:res.status,body:await res.json()};}
-test('reservation, authorization, payment and cancellation lifecycle',async()=>{
- assert.equal((await req(null,'')).status,401);
- const state=await req();const slot=state.body.slots[0];assert.ok(slot);
- const params={action:'reserve',cast:'aoi',slot,minutes:30,course:'雑談',adult:true,agree:true,price:1};
- assert.equal((await req(params,'alice','https://evil.test')).status,403);
- assert.equal((await req({...params,adult:false})).status,400);
- const reserved=await req(params);assert.equal(reserved.status,200);const id=reserved.body.id;
- assert.equal((await req(params)).status,409);
- assert.equal((await req()).body.bookings.length,1,'failed duplicate transaction rolled back');
- assert.equal((await req()).body.bookings[0].price,3000,'client amount ignored');
- assert.equal((await req({action:'pay',id},'bob')).status,404);
- assert.equal((await req(null,'bob')).body.bookings.length,0);
- assert.equal((await req({action:'message',id,role:'user',body:'before payment'})).status,409);
- assert.equal((await req({action:'pay',id})).status,200);
- assert.equal((await req({action:'pay',id})).status,200);
- assert.equal((await req()).body.events.filter(e=>e.type.includes('決済完了')).length,1);
- assert.equal((await req({action:'message',id,role:'user',body:'よろしくお願いします'})).status,200);
- assert.equal((await req({action:'message',id,role:'cast',body:'お待ちしています'})).status,200);
- assert.equal((await req({action:'report',id,body:'接続できません'})).status,200);
- assert.equal((await req()).body.messages.length,2);
- assert.equal((await req({action:'cancel',id})).status,200);
- assert.equal((await req()).body.bookings[0].payment,'test_refunded');
- assert.equal((await req({action:'pay',id})).status,409);
- const again=await req(params);assert.equal(again.status,200);
- sql.prepare('UPDATE bookings SET expires=0 WHERE id=?').run(again.body.id);
- assert.equal((await req({action:'pay',id:again.body.id})).status,409);
- assert.equal((await req(params)).status,200,'expired lock released');
- assert.equal((await req({...params,minutes:15,course:'会話練習'})).status,400);
+const url=s=>'data:text/javascript;base64,'+Buffer.from(compile(s)).toString('base64');
+const catalog=url(fs.readFileSync('lib/catalog.ts','utf8'));
+const {handleWorkspace}=await import(url(fs.readFileSync('lib/workspace-service.ts','utf8').replace("'./catalog'",JSON.stringify(catalog))));
+function setup(){
+ const sql=new DatabaseSync(':memory:');sql.exec('PRAGMA foreign_keys=ON');
+ for(const f of fs.readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())sql.exec(fs.readFileSync('drizzle/'+f,'utf8'));
+ const db={prepare(text){return{bind(...args){return{run(){const r=sql.prepare(text).run(...args);return{meta:{changes:Number(r.changes)}}},first(){return sql.prepare(text).get(...args)||null},all(){return{results:sql.prepare(text).all(...args)}}}}}},batch(statements){sql.exec('BEGIN');try{const result=statements.map(s=>s.run());sql.exec('COMMIT');return result;}catch(e){sql.exec('ROLLBACK');throw e;}}};
+ const env={DB:db,ADMIN_EMAILS:'owner@example.test'};
+ async function req(who,body,origin='https://test.local',mail){const r=new Request('https://test.local/api/workspace',{method:body?'POST':'GET',headers:{...(who?{'oai-authenticated-user-id':who,'oai-authenticated-user-email':mail||who+'@example.test'}:{}),origin},...(body?{body:JSON.stringify(body)}:{})});const res=await handleWorkspace(r,env);return{status:res.status,body:await res.json()};}
+ return{sql,req,env};
+}
+test('separate accounts: approval, shifts, shared inventory and private conversation',async()=>{
+ const {req,sql}=setup();
+ assert.equal((await req(null)).status,401);
+ assert.equal((await req('owner')).body.me.role,'admin');
+ assert.equal((await req('alice')).body.me.role,'user');
+ assert.equal((await req('bob')).body.me.role,'user');
+ assert.equal((await req('cast')).body.me.role,'user');
+ assert.equal((await req('alice',{action:'profile',name:'a',role:'admin'},'https://evil.test')).status,403);
+ assert.equal((await req('alice',{action:'profile',name:'Alice',role:'admin'})).status,200);
+ assert.equal((await req('alice')).body.me.role,'user');
+ assert.equal((await req('cast',{action:'apply',name:'葵',bio:'話し相手です'})).status,200);
+ assert.equal((await req('alice')).body.casts.length,0);
+ assert.equal((await req('alice')).body.applications.length,0);
+ assert.equal((await req('alice',{action:'review',target:'cast',decision:'approve'})).status,403);
+ const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;
+ assert.equal((await req('cast',{action:'shiftAdd',starts:start})).status,403);
+ assert.equal((await req('owner',{action:'review',target:'cast',decision:'approve'})).status,200);
+ assert.equal((await req('cast')).body.me.role,'cast');
+ assert.equal((await req('cast',{action:'shiftAdd',starts:start+60000})).status,400);
+ assert.equal((await req('cast',{action:'shiftAdd',starts:start})).status,200);
+ assert.equal((await req('cast',{action:'shiftAdd',starts:start})).status,409);
+ const shift=(await req('alice')).body.shifts[0].id;
+ assert.equal((await req('alice',{action:'shiftToggle',id:shift,enabled:0})).status,403);
+ const reserve={action:'reserve',shiftId:shift,minutes:30,course:'雑談',adult:true,agree:true,price:1};
+ assert.equal((await req('cast',reserve)).status,403);
+ const result=await Promise.all([req('alice',reserve),req('bob',reserve)]);
+ assert.deepEqual(result.map(r=>r.status).sort(),[200,409],'only one competing customer wins');
+ const winner=result[0].status===200?'alice':'bob',loser=winner==='alice'?'bob':'alice';
+ const id=result.find(r=>r.status===200).body.id;
+ assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM reservations').get().n,1);
+ assert.equal((await req(winner)).body.reservations[0].price,3000);
+ assert.equal((await req(loser)).body.shifts.length,0);
+ assert.equal((await req(loser)).body.reservations.length,0);
+ assert.equal((await req('cast')).body.reservations.length,1);
+ assert.equal((await req('cast',{action:'shiftToggle',id:shift,enabled:0})).status,409);
+ assert.equal((await req(loser,{action:'pay',id})).status,404);
+ assert.equal((await req('cast',{action:'pay',id})).status,403);
+ assert.equal((await req(winner,{action:'message',id,body:'未確定'})).status,409);
+ assert.equal((await req(winner,{action:'pay',id})).status,200);
+ assert.equal((await req(winner,{action:'pay',id})).status,200);
+ assert.equal((await req(winner,{action:'message',id,body:'こんにちは',sender:'cast'})).status,200);
+ assert.equal((await req('cast',{action:'message',id,body:'よろしくお願いします'})).status,200);
+ assert.equal((await req(winner)).body.messages.length,2);
+ assert.equal((await req('cast')).body.messages.length,2);
+ assert.equal((await req(loser)).body.messages.length,0);
+ assert.equal((await req('owner')).body.messages.length,0);
+ assert.equal((await req('owner',{action:'message',id,body:'管理者の割り込み'})).status,403);
+ assert.equal((await req(loser,{action:'message',id,body:'侵入'})).status,404);
+ assert.equal(sql.prepare('SELECT sender FROM conversation_messages WHERE body=?').get('こんにちは').sender,winner);
+ assert.equal((await req('cast',{action:'complete',id})).status,409);
+ assert.equal((await req('cast',{action:'cancel',id})).status,403);
+ assert.equal((await req(winner,{action:'cancel',id})).status,200);
+ assert.equal((await req(winner,{action:'message',id,body:'取り消し後'})).status,409);
+ assert.equal((await req(loser)).body.shifts.length,1);
+ assert.equal((await req(loser, reserve)).status,200);
+ sql.prepare("UPDATE reservations SET expires=0 WHERE status='held'").run();
+ assert.equal((await req(winner)).body.shifts.length,1);
+ assert.equal((await req(winner,reserve)).status,200);
+ assert.equal((await req('owner',{action:'review',target:'cast',decision:'suspend'})).status,200);
+ assert.equal((await req('cast',{action:'shiftAdd',starts:start+3600000})).status,403);
+ assert.equal((await req(loser)).body.casts.length,0);
+});
+test('shift ownership, cancellation ownership, malformed input and no automatic admin',async()=>{
+ const{req}=setup();assert.equal((await req('first')).body.me.role,'user');
+ const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;
+ for(const cast of ['c1','c2']){await req(cast,{action:'apply',name:cast,bio:'紹介'});await req('owner',{action:'review',target:cast,decision:'approve'});await req(cast,{action:'shiftAdd',starts:start});}
+ const s=(await req('first')).body.shifts.find(s=>s.cast_id==='c1');
+ assert.equal((await req('c2',{action:'shiftToggle',id:s.id,enabled:0})).status,404);
+ assert.equal((await req('c1',{action:'shiftToggle',id:s.id,enabled:0})).status,200);
+ const p={action:'reserve',shiftId:s.id,minutes:30,course:'雑談',adult:true,agree:true};
+ assert.equal((await req('first',p)).status,409);
+ await req('c1',{action:'shiftToggle',id:s.id,enabled:1});
+ const id=(await req('first',p)).body.id;
+ assert.equal((await req('c2',{action:'cancel',id})).status,404);
+ assert.equal((await req('first',{action:'pay',id})).status,200);
+ assert.equal((await req('first',{action:'message',id,body:'x'.repeat(1001)})).status,400);
+ assert.equal((await req('first',{action:'review',target:'first',decision:'approve'})).status,403);
 });

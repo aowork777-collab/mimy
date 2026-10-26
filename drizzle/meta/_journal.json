@@ -8,6 +8,20 @@
       "when": 1792935451031,
       "tag": "0000_previous_mongoose",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793055566522,
+      "tag": "0001_robust_punisher",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793055618278,
+      "tag": "0002_previous_iron_patriot",
+      "breakpoints": true
     }
   ]
 }

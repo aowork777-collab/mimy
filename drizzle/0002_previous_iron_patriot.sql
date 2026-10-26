@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `one_active_reservation_per_shift` ON `reservations` (`shift_id`) WHERE "reservations"."status" IN ('held','confirmed','completed');

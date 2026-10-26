@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { sqliteTable, text, integer, uniqueIndex } from 'drizzle-orm/sqlite-core';
 export const bookings = sqliteTable('bookings', {
  id:text('id').primaryKey(), owner:text('owner').notNull(), cast:text('cast').notNull(), slot:text('slot').notNull(), course:text('course').notNull(), minutes:integer('minutes').notNull(), price:integer('price').notNull(), status:text('status').notNull(), payment:text('payment').notNull(), expires:integer('expires').notNull(), created:integer('created').notNull(), terms:text('terms').notNull()
@@ -6,3 +7,11 @@ export const locks = sqliteTable('slot_locks',{id:text('id').primaryKey(), owner
 export const messages = sqliteTable('messages',{id:text('id').primaryKey(),owner:text('owner').notNull(),booking:text('booking').notNull(),role:text('role').notNull(),body:text('body').notNull(),created:integer('created').notNull()});
 export const events = sqliteTable('events',{id:text('id').primaryKey(),owner:text('owner').notNull(),booking:text('booking').notNull(),type:text('type').notNull(),created:integer('created').notNull()});
 export const reports = sqliteTable('reports',{id:text('id').primaryKey(),owner:text('owner').notNull(),booking:text('booking').notNull(),body:text('body').notNull(),created:integer('created').notNull()});
+
+// V2: real account boundaries. Legacy sandbox tables above remain untouched.
+export const members = sqliteTable('members',{id:text('id').primaryKey(),name:text('name').notNull(),role:text('role').notNull().default('user'),created:integer('created').notNull()});
+export const castProfiles = sqliteTable('cast_profiles',{id:text('id').primaryKey().references(()=>members.id),name:text('name').notNull(),bio:text('bio').notNull(),status:text('status').notNull().default('pending')});
+export const shifts = sqliteTable('shifts',{id:text('id').primaryKey(),castId:text('cast_id').notNull().references(()=>members.id),starts:integer('starts').notNull(),enabled:integer('enabled').notNull().default(1)},t=>[uniqueIndex('cast_hour').on(t.castId,t.starts)]);
+export const reservations = sqliteTable('reservations',{id:text('id').primaryKey(),customer:text('customer').notNull().references(()=>members.id),castId:text('cast_id').notNull().references(()=>members.id),shiftId:text('shift_id').notNull().references(()=>shifts.id),minutes:integer('minutes').notNull(),price:integer('price').notNull(),course:text('course').notNull(),status:text('status').notNull(),expires:integer('expires').notNull(),created:integer('created').notNull()},t=>[uniqueIndex('one_active_reservation_per_shift').on(t.shiftId).where(sql`${t.status} IN ('held','confirmed','completed')`)]);
+export const conversationMessages = sqliteTable('conversation_messages',{id:text('id').primaryKey(),reservation:text('reservation').notNull().references(()=>reservations.id),sender:text('sender').notNull().references(()=>members.id),body:text('body').notNull(),created:integer('created').notNull()});
+export const auditEvents = sqliteTable('audit_events',{id:text('id').primaryKey(),actor:text('actor').notNull(),target:text('target').notNull(),action:text('action').notNull(),created:integer('created').notNull()});
