@@ -95,9 +95,9 @@ test('shift ownership, cancellation ownership, malformed input and no automatic 
 });
 const calls=[];
 globalThis.__voiceCalls=calls;
-const fakeSdk=url(`export class RoomServiceClient{async createRoom(o){globalThis.__voiceCalls.push(o)}async deleteRoom(n){globalThis.__voiceCalls.push({deleted:n})}}export class AccessToken{constructor(k,s,o){this.options=o}addGrant(g){this.grant=g}async toJwt(){return JSON.stringify({options:this.options,grant:this.grant})}}export const TrackSource={MICROPHONE:2};`);
+const fakeSdk=url(`export class RoomServiceClient{async createRoom(o){globalThis.__voiceCalls.push(o)}async deleteRoom(n){globalThis.__voiceCalls.push({deleted:n})}}export class AccessToken{constructor(k,s,o){this.options=o}addGrant(g){this.grant=g}async toJwt(){return JSON.stringify({options:this.options,grant:this.grant})}}export const TrackSource={MICROPHONE:2,CAMERA:1};`);
 const {handleCall}=await import(url(fs.readFileSync('lib/call-service.ts','utf8').replace("'livekit-server-sdk'",JSON.stringify(fakeSdk))));
-test('voice: fail closed, participant authorization, time limits and microphone-only grants',async()=>{
+test('voice: fail closed, participant authorization, time limits and camera and microphone grants without screen sharing',async()=>{
  const {sql,req,env}=setup();
  await req('alice');await req('bob');await req('cast',{action:'apply',name:'葵',bio:'紹介'});await req('owner',{action:'review',target:'cast',decision:'approve'});
  const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;
@@ -109,7 +109,7 @@ test('voice: fail closed, participant authorization, time limits and microphone-
  Object.assign(env,{LIVEKIT_URL:'wss://test.livekit.cloud',LIVEKIT_API_KEY:'test',LIVEKIT_API_SECRET:'test',LIVEKIT_FREE_PLAN:'build'});
  assert.equal((await call('alice')).status,409);await req('alice',{action:'pay',id});assert.equal((await call('alice')).status,409);
  sql.prepare('UPDATE shifts SET starts=? WHERE id=?').run(Date.now()-60000,shift);
- for(const who of ['alice','cast']){const result=await call(who);assert.equal(result.status,200);const token=JSON.parse(result.body.token);assert.equal(token.options.identity,who);assert.ok(token.options.ttl<=60);assert.deepEqual(token.grant.canPublishSources,[2]);assert.equal(token.grant.canPublishData,false);assert.equal(token.grant.room,'reservation-'+id);}
+ for(const who of ['alice','cast']){const result=await call(who);assert.equal(result.status,200);const token=JSON.parse(result.body.token);assert.equal(token.options.identity,who);assert.ok(token.options.ttl<=60);assert.deepEqual(token.grant.canPublishSources,[2,1]);assert.equal(token.grant.canPublishData,false);assert.equal(token.grant.room,'reservation-'+id);}
  assert.equal(calls.filter(c=>c.name).at(-1).maxParticipants,2);
  assert.equal((await call('alice','check')).status,200);
  await req('owner',{action:'review',target:'cast',decision:'suspend'});assert.equal((await call('alice')).status,409);
