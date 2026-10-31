@@ -119,3 +119,18 @@ test('voice: fail closed, participant authorization, time limits and camera and 
  await req('alice',{action:'cancel',id});assert.equal((await call('alice')).status,409);
  env.LIVEKIT_FREE_PLAN='ship';assert.equal((await call('alice')).status,503);
 });
+test('expanded cast profiles: persist, validate and restrict editing to approved owner',async()=>{
+ const {req}=setup();await req('cast',{action:'apply',name:'葵',bio:'紹介'});
+ const edit={action:'castProfile',name:'葵',bio:'更新',headline:'こんにちは',photo_url:'https://example.com/photo.jpg',topics:'映画、音楽',hobbies:'読書',style:'ゆっくり'};
+ assert.equal((await req('cast',edit)).status,403);
+ await req('owner',{action:'review',target:'cast',decision:'approve'});
+ assert.equal((await req('alice',edit)).status,403);
+ assert.equal((await req('cast',{...edit,photo_url:'javascript:alert(1)'})).status,400);
+ assert.equal((await req('cast',{...edit,headline:'a'.repeat(61)})).status,400);
+ assert.equal((await req('cast',edit)).status,200);
+ const cast=(await req('alice')).body.casts[0];for(const key of ['headline','photo_url','topics','hobbies','style'])assert.equal(cast[key],edit[key]);
+ assert.equal((await req('cast',{action:'castProfile',name:'葵',bio:'再更新'})).status,200);
+ assert.equal((await req('alice')).body.casts[0].topics,'映画、音楽');
+ await req('owner',{action:'review',target:'cast',decision:'suspend'});
+ assert.equal((await req('alice')).body.casts.length,0);assert.equal((await req('cast',edit)).status,403);
+});
