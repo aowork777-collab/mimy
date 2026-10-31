@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import {PreferenceLoader} from "../components/preferences";
 
 export const metadata: Metadata = {
   title: "mimy.｜今夜、あなたのそばに。",
@@ -17,7 +18,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased"><PreferenceLoader/>{children}</body>
     </html>
   );
 }

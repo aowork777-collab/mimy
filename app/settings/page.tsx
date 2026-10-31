@@ -1,0 +1,3 @@
+import {InfoShell} from '../../components/info-shell';
+import {PreferenceSettings} from '../../components/preferences';
+export default function Settings(){return <InfoShell title="設定" label="MAKE YOURSELF COMFORTABLE"><PreferenceSettings/><section className="panel"><h2>アカウント</h2><p>表示名はホームの「アカウント」から変更できます。役割は運営の承認によって決まります。</p><a className="secondary" href="/">ホームへ戻る</a></section><section className="panel"><h2>カメラ・マイク</h2><p>参加時はカメラオフです。通話画面でカメラのオン／オフとミュートを切り替えられます。使用許可はブラウザーのサイト設定から変更してください。</p><a href="/help#call" className="secondary">通話のトラブルを確認</a></section><section className="panel"><h2>通知・退会について</h2><p>メール・LINE通知、アカウントの自動削除は現在未対応です。表示設定のリセットでは予約やチャットは削除されません。</p><a href="/privacy" className="secondary">データの取り扱いを見る</a></section></InfoShell>}
