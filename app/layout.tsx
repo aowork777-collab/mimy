@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "miny.｜今夜、あなたのそばに。",
+  title: "mimy.｜今夜、あなたのそばに。",
   description: "安心して話せる、予約制の雑談・会話練習。",
   icons: {
     icon: "/favicon.svg",
