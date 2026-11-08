@@ -45,7 +45,7 @@ export async function handleWorkspace(req:Request,env:Environment){
  const result=await q('UPDATE admin_invites SET accepted_by=?,accepted_at=? WHERE hash=? AND email=? AND expires>? AND accepted_by IS NULL AND revoked=0',actor,now,hash,email!.trim().toLowerCase(),now).run();requireThat(result.meta.changes===1,409,'招待が期限切れ・使用済み・取消済み、またはログインしたメールアドレスが招待先と一致しません');await audit(actor,'管理者招待を承諾').run();return json({ok:true});
  }
  if(a.action==='profile'){
- requireThat(text(a.name,40),400,'表示名は1〜40文字です');await q('UPDATE members SET name=? WHERE id=?',a.name.trim(),actor).run();return json({ok:true});
+ requireThat(text(a.name,40),400,'表示名は1〜40文字です');await q('UPDATE members SET name=? WHERE id=?',a.name.trim(),actor).run();return json({ok:true,me:{id:actor,name:a.name.trim(),role}});
  }
  if(a.action==='apply'){
  requireThat(role==='user',403,'利用者アカウントから申請してください');requireThat(text(a.name,40)&&text(a.bio,500),400,'名前と紹介文を入力してください');requireThat(!profile||profile.status==='rejected',409,'すでに申請済みです');
@@ -59,7 +59,7 @@ export async function handleWorkspace(req:Request,env:Environment){
  if(a.action==='castProfile'){
  requireThat(role==='cast'&&profile?.status==='approved',403,'承認されたキャストのみ操作できます');requireThat(text(a.name,40)&&text(a.bio,500),400,'プロフィールの内容が不正です');const fields=['headline','photo_url','topics','hobbies','style'];const limits=[60,1000,100,200,100];
  const values=fields.map((key,i)=>{const value=a[key]===undefined?String(profile?.[key]||''):a[key];requireThat(typeof value==='string'&&value.trim().length<=limits[i],400,'プロフィール項目の長さが不正です');return value.trim();});
- if(values[1]){let valid=false;try{const u=new URL(values[1]);valid=u.protocol==='https:'&&!u.username&&!u.password&&!!u.hostname;}catch{}requireThat(valid,400,'写真はHTTPSのURLを指定してください');}
+ if(values[1]&&values[1]!==profile?.photo_url){let valid=false;try{const u=new URL(values[1]);valid=u.protocol==='https:'&&!u.username&&!u.password&&!!u.hostname;}catch{}requireThat(valid,400,'写真はHTTPSのURLを指定してください');}
  await db.batch([q('UPDATE cast_profiles SET name=?,bio=?,headline=?,photo_url=?,topics=?,hobbies=?,style=? WHERE id=?',a.name.trim(),a.bio.trim(),...values,actor),audit(actor,'プロフィール更新')]);return json({ok:true});
  }
  if(a.action==='shiftAdd'||a.action==='shiftToggle'){

@@ -1,0 +1,6 @@
+'use client';
+import {useState} from 'react';
+export function PhotoPicker({url}:{url?:string}){const[photo,setPhoto]=useState(url||''),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
+ async function upload(file:File){setBusy(true);setMessage('');try{if(!['image/jpeg','image/png','image/webp'].includes(file.type))throw Error('JPEG・PNG・WebP形式を選択してください。HEICはJPEGに変換してからお試しください。');if(file.size>3*1024*1024)throw Error('3MB以下の写真を選択してください。');const r=await fetch('/api/cast-photo',{method:'POST',headers:{'Content-Type':file.type},body:file});const d=await r.json() as {url:string;error?:string};if(!r.ok)throw Error(d.error);setPhoto(d.url);setMessage('写真を保存しました。公開プロフィールに反映されます。');}catch(e){setMessage((e as Error).message)}finally{setBusy(false)}}
+ return <div className="photo-picker"><div className="eyebrow">YOUR PROFILE PHOTO</div><h3>あなたらしい1枚を。</h3>{photo?<img src={photo} alt="現在のプロフィール写真" referrerPolicy="no-referrer"/>:<div className="photo-picker-placeholder">☾</div>}<label>ファイル・アルバムから写真を選ぶ<input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={e=>{const f=e.target.files?.[0];if(f)void upload(f);e.target.value=''}}/></label><p className="muted">JPEG・PNG・WebP／3MBまで。選択すると写真を保存・公開します。使用権のある写真を選んでください。</p><p role="status">{busy?'アップロード中…':message}</p></div>
+}

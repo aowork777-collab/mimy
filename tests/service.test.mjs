@@ -152,3 +152,22 @@ test('admin invites bind email, expire, revoke and accept only once',async()=>{
  assert.equal((await req('bob')).body.adminInvites.length,0);
  assert.equal(JSON.stringify((await req('owner')).body.adminInvites).includes(token),false);
 });
+const {handlePhoto}=await import(url(fs.readFileSync('lib/photo-service.ts','utf8')));
+test('photo upload belongs to approved actor, validates format and persists through profile edits',async()=>{
+ const{req,env}=setup();const files=new Map();env.BUCKET={async put(k,bytes,o){files.set(k,{body:bytes,httpMetadata:o.httpMetadata})},async get(k){return files.get(k)||null}};
+ await req('cast',{action:'apply',name:'葵',bio:'紹介'});await req('alice');
+ const png=new Uint8Array(24);png.set([137,80,78,71,13,10,26,10]);
+ const upload=(who,bytes=png,origin='https://test.local')=>handlePhoto(new Request('https://test.local/api/cast-photo',{method:'POST',headers:{origin,'oai-authenticated-user-id':who,'oai-authenticated-user-email':who+'@example.test'},body:bytes}),env);
+ assert.equal((await upload('cast')).status,403);await req('owner',{action:'review',target:'cast',decision:'approve'});
+ assert.equal((await upload('alice')).status,403);assert.equal((await upload('cast',png,'https://evil.test')).status,403);
+ assert.equal((await upload('cast',new TextEncoder().encode('<svg/>'))).status,400);
+ assert.equal((await upload('cast',new Uint8Array(3*1024*1024+1))).status,413);
+ const result=await upload('cast');assert.equal(result.status,200);const photo=(await result.json()).url;assert.ok(photo.startsWith('/api/cast-photo?id=cast&v='));
+ await req('cast',{action:'castProfile',name:'葵',bio:'更新'});assert.equal((await req('alice')).body.casts[0].photo_url,photo);
+ assert.equal((await handlePhoto(new Request('https://test.local'+photo),env)).status,200);
+ await req('owner',{action:'review',target:'cast',decision:'suspend'});assert.equal((await handlePhoto(new Request('https://test.local'+photo),env)).status,404);
+});
+test('account save returns the persisted actor profile without editing another member',async()=>{
+ const{req}=setup();await req('bob',{action:'profile',name:'Bob'});const r=await req('alice',{action:'profile',name:'Alice',id:'bob'});
+ assert.equal(r.body.me.name,'Alice');assert.equal(r.body.me.id,'alice');assert.equal((await req('alice')).body.me.name,'Alice');assert.equal((await req('bob')).body.me.name,'Bob');
+});
