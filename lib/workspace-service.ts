@@ -14,7 +14,8 @@ export async function handleWorkspace(req:Request,env:Environment){
  const rows=async(s:string,...v:(string|number|null)[])=>(await q(s,...v).all()).results;
  await q("INSERT OR IGNORE INTO members(id,name,role,created) VALUES(?,?,'user',?)",actor,'ゲスト',now).run();
  const me=await q('SELECT * FROM members WHERE id=?',actor).first<{id:string;name:string;role:string}>();
- const admin=(env.ADMIN_EMAILS||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean).includes(email!.trim().toLowerCase());
+ const invitedAdmin=await q('SELECT id FROM admin_invites WHERE accepted_by=? AND email=? AND revoked=0',actor,email!.trim().toLowerCase()).first();
+ const admin=!!invitedAdmin||(env.ADMIN_EMAILS||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean).includes(email!.trim().toLowerCase());
  const role=admin?'admin':me!.role;
  const audit=(target:string,action:string)=>q('INSERT INTO audit_events VALUES(?,?,?,?,?)',crypto.randomUUID(),actor,target,action,now);
  // Expiry is checked on every request; the partial unique index releases the slot atomically.
@@ -22,9 +23,27 @@ export async function handleWorkspace(req:Request,env:Environment){
  const profile=await q('SELECT * FROM cast_profiles WHERE id=?',actor).first();
  if(req.method==='GET'){
  const reservations=await rows(`SELECT r.*,s.starts,p.name AS cast_name,m.name AS customer_name FROM reservations r JOIN shifts s ON s.id=r.shift_id JOIN cast_profiles p ON p.id=r.cast_id JOIN members m ON m.id=r.customer WHERE ${admin?'1=1':'(r.customer=? OR r.cast_id=?)'} ORDER BY s.starts DESC`,...(admin?[]:[actor,actor]));
- return json({me:{id:actor,name:me!.name,role},profile,casts:await rows("SELECT id,name,bio,headline,photo_url,topics,hobbies,style FROM cast_profiles WHERE status='approved'"),shifts:await rows("SELECT s.* FROM shifts s JOIN cast_profiles p ON p.id=s.cast_id WHERE s.enabled=1 AND p.status='approved' AND s.starts>? AND NOT EXISTS(SELECT 1 FROM reservations r WHERE r.shift_id=s.id AND r.status IN ('held','confirmed','completed')) ORDER BY s.starts",now+900000),ownShifts:role==='cast'?await rows('SELECT s.*,r.status AS reservation_status FROM shifts s LEFT JOIN reservations r ON r.shift_id=s.id AND r.status IN (\'held\',\'confirmed\',\'completed\') WHERE s.cast_id=? AND s.starts>? ORDER BY s.starts',actor,now-86400000):[],reservations,messages:await rows("SELECT cm.*,m.name AS sender_name FROM conversation_messages cm JOIN reservations r ON r.id=cm.reservation JOIN members m ON m.id=cm.sender WHERE r.customer=? OR r.cast_id=? ORDER BY cm.created,cm.id",actor,actor),applications:admin?await rows('SELECT * FROM cast_profiles ORDER BY status,name'):[],events:admin?await rows('SELECT * FROM audit_events ORDER BY created DESC LIMIT 100'):[],reports:admin?await rows('SELECT p.* FROM reports p JOIN reservations r ON r.id=p.booking ORDER BY p.created DESC'):[],voiceConfigured:!!(env.LIVEKIT_URL?.match(/^wss:\/\/[a-z0-9-]+\.livekit\.cloud$/i)&&env.LIVEKIT_API_KEY&&env.LIVEKIT_API_SECRET&&env.LIVEKIT_FREE_PLAN==='build'),paymentMode:'test'});
+ return json({adminInvites:admin?await rows('SELECT id,email,created,expires,accepted_by,accepted_at,revoked FROM admin_invites ORDER BY created DESC LIMIT 100'):[],me:{id:actor,name:me!.name,role},profile,casts:await rows("SELECT id,name,bio,headline,photo_url,topics,hobbies,style FROM cast_profiles WHERE status='approved'"),shifts:await rows("SELECT s.* FROM shifts s JOIN cast_profiles p ON p.id=s.cast_id WHERE s.enabled=1 AND p.status='approved' AND s.starts>? AND NOT EXISTS(SELECT 1 FROM reservations r WHERE r.shift_id=s.id AND r.status IN ('held','confirmed','completed')) ORDER BY s.starts",now+900000),ownShifts:role==='cast'?await rows('SELECT s.*,r.status AS reservation_status FROM shifts s LEFT JOIN reservations r ON r.shift_id=s.id AND r.status IN (\'held\',\'confirmed\',\'completed\') WHERE s.cast_id=? AND s.starts>? ORDER BY s.starts',actor,now-86400000):[],reservations,messages:await rows("SELECT cm.*,m.name AS sender_name FROM conversation_messages cm JOIN reservations r ON r.id=cm.reservation JOIN members m ON m.id=cm.sender WHERE r.customer=? OR r.cast_id=? ORDER BY cm.created,cm.id",actor,actor),applications:admin?await rows('SELECT * FROM cast_profiles ORDER BY status,name'):[],events:admin?await rows('SELECT * FROM audit_events ORDER BY created DESC LIMIT 100'):[],reports:admin?await rows('SELECT p.* FROM reports p JOIN reservations r ON r.id=p.booking ORDER BY p.created DESC'):[],voiceConfigured:!!(env.LIVEKIT_URL?.match(/^wss:\/\/[a-z0-9-]+\.livekit\.cloud$/i)&&env.LIVEKIT_API_KEY&&env.LIVEKIT_API_SECRET&&env.LIVEKIT_FREE_PLAN==='build'),paymentMode:'test'});
  }
  const raw=await req.text();requireThat(raw.length<=10000,413,'送信内容が長すぎます');let a:any;try{a=JSON.parse(raw);}catch{throw new Failure(400,'JSON形式が不正です');}requireThat(a&&typeof a==='object',400,'入力が不正です');
+
+ if(a.action==='adminInviteCreate'){
+ requireThat(admin,403,'管理者のみ招待できます');requireThat(typeof a.email==='string'&&a.email.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email.trim()),400,'メールアドレスを確認してください');
+ const target=a.email.trim().toLowerCase();requireThat(target!==email!.trim().toLowerCase(),400,'自分以外のメールアドレスを指定してください');
+ const token=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');
+ const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token))),b=>b.toString(16).padStart(2,'0')).join('');
+ const inviteId=crypto.randomUUID(),expires=now+24*3600000;
+ await db.batch([q('INSERT INTO admin_invites(id,hash,email,creator,created,expires,revoked) VALUES(?,?,?,?,?,?,0)',inviteId,hash,target,actor,now,expires),audit(inviteId,'管理者招待を発行')]);return json({url:new URL('/admin-invite',req.url).origin+'/admin-invite#'+token,expires});
+ }
+ if(a.action==='adminInviteRevoke'){
+ requireThat(admin,403,'管理者のみ操作できます');requireThat(typeof a.id==='string',400,'招待を指定してください');
+ const result=await q('UPDATE admin_invites SET revoked=1 WHERE id=? AND accepted_by IS NULL AND revoked=0',a.id).run();requireThat(result.meta.changes===1,409,'使用済みまたは無効な招待です');await audit(a.id,'管理者招待を取り消し').run();return json({ok:true});
+ }
+ if(a.action==='adminInviteAccept'){
+ requireThat(typeof a.token==='string'&&/^[a-f0-9]{64}$/.test(a.token),400,'招待URLが不正です');
+ const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(a.token))),b=>b.toString(16).padStart(2,'0')).join('');
+ const result=await q('UPDATE admin_invites SET accepted_by=?,accepted_at=? WHERE hash=? AND email=? AND expires>? AND accepted_by IS NULL AND revoked=0',actor,now,hash,email!.trim().toLowerCase(),now).run();requireThat(result.meta.changes===1,409,'招待が期限切れ・使用済み・取消済み、またはログインしたメールアドレスが招待先と一致しません');await audit(actor,'管理者招待を承諾').run();return json({ok:true});
+ }
  if(a.action==='profile'){
  requireThat(text(a.name,40),400,'表示名は1〜40文字です');await q('UPDATE members SET name=? WHERE id=?',a.name.trim(),actor).run();return json({ok:true});
  }

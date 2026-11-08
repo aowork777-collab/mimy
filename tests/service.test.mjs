@@ -134,3 +134,21 @@ test('expanded cast profiles: persist, validate and restrict editing to approved
  await req('owner',{action:'review',target:'cast',decision:'suspend'});
  assert.equal((await req('alice')).body.casts.length,0);assert.equal((await req('cast',edit)).status,403);
 });
+test('admin invites bind email, expire, revoke and accept only once',async()=>{
+ const{req,sql}=setup();
+ assert.equal((await req('alice',{action:'adminInviteCreate',email:'bob@example.test'})).status,403);
+ const make=async(email)=>{const r=await req('owner',{action:'adminInviteCreate',email});assert.equal(r.status,200);return r.body.url.split('#')[1]};
+ const token=await make('alice@example.test');
+ assert.equal((await req('bob',{action:'adminInviteAccept',token})).status,409);
+ assert.equal((await req('alice',{action:'adminInviteAccept',token})).status,200);
+ assert.equal((await req('alice')).body.me.role,'admin');
+ assert.equal((await req('alice',{action:'adminInviteAccept',token})).status,409);
+ assert.equal((await req('alice',{action:'adminInviteCreate',email:'next@example.test'})).status,200);
+ const expired=await make('bob@example.test');sql.prepare('UPDATE admin_invites SET expires=0 WHERE email=?').run('bob@example.test');
+ assert.equal((await req('bob',{action:'adminInviteAccept',token:expired})).status,409);
+ const revoked=await make('charlie@example.test');const invite=sql.prepare('SELECT id FROM admin_invites WHERE email=?').get('charlie@example.test');
+ assert.equal((await req('owner',{action:'adminInviteRevoke',id:invite.id})).status,200);
+ assert.equal((await req('charlie',{action:'adminInviteAccept',token:revoked})).status,409);
+ assert.equal((await req('bob')).body.adminInvites.length,0);
+ assert.equal(JSON.stringify((await req('owner')).body.adminInvites).includes(token),false);
+});
