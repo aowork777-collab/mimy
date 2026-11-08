@@ -87,7 +87,16 @@ export async function handleWorkspace(req:Request,env:Environment){
  requireThat(booking.customer===actor||booking.cast_id===actor,403,'予約の当事者のみ報告できます');requireThat(text(a.body,1000),400,'内容を1〜1000文字で入力してください');await db.batch([q('INSERT INTO reports VALUES(?,?,?,?,?)',crypto.randomUUID(),actor,a.id,a.body.trim(),now),audit(a.id,'問題の報告')]);
  }else if(a.action==='message'){
  requireThat(booking.customer===actor||booking.cast_id===actor,403,'予約の当事者のみ送信できます');requireThat(text(a.body,1000),400,'メッセージは1〜1000文字です');
- const r=await q("INSERT INTO conversation_messages SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM reservations WHERE id=? AND status IN ('confirmed','completed'))",crypto.randomUUID(),a.id,actor,a.body.trim(),now,a.id).run();requireThat(r.meta.changes===1,409,'確定した予約でのみ送信できます');
+ // A single SQL statement serializes quota checking with insertion, across Workers.
+ const cutoff=now-60000;
+ const r=await q("INSERT INTO conversation_messages SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM reservations WHERE id=? AND status IN ('confirmed','completed')) AND (SELECT COUNT(*) FROM conversation_messages WHERE sender=? AND created>?)<20",crypto.randomUUID(),a.id,actor,a.body.trim(),now,a.id,actor,cutoff).run();
+ if(r.meta.changes!==1){
+ const current=await q('SELECT status FROM reservations WHERE id=?',a.id).first<{status:string}>();
+ requireThat(current&&['confirmed','completed'].includes(current.status),409,'確定した予約でのみ送信できます');
+ const usage=await q('SELECT MIN(created) AS oldest FROM conversation_messages WHERE sender=? AND created>?',actor,cutoff).first<{oldest:number|null}>();
+ const retryAfter=Math.max(1,Math.ceil(((usage?.oldest??now)+60000-now)/1000));
+ return Response.json({error:`連続送信を防ぐため、メッセージは1分間に20件までです。${retryAfter}秒ほど待ってから送信してください。`,retryAfter},{status:429,headers:{'Cache-Control':'no-store','Retry-After':String(retryAfter)}});
+ }
  }else throw new Failure(400,'未対応の操作です');return json({ok:true});
  }catch(e){if(e instanceof Failure)return json({error:e.message},e.status);if(String(e).includes('UNIQUE'))return json({error:'この枠はすでに登録・予約されています。'},409);console.error('workspace operation failed');return json({error:'処理に失敗しました。再読み込みして状態を確認してください。'},500);}
 }

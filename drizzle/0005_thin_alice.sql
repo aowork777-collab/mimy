@@ -1,0 +1,1 @@
+CREATE INDEX `message_sender_created` ON `conversation_messages` (`sender`,`created`);

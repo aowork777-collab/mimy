@@ -1,3 +1,4 @@
+import {sanitizePhoto} from './photo-sanitizer';
 type PhotoEnv={DB?:D1Database;BUCKET?:R2Bucket};
 const json=(error:string,status:number)=>Response.json({error},{status,headers:{'Cache-Control':'no-store'}});
 const keyFor=async(id:string)=>'cast-photos/'+Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(id))),b=>b.toString(16).padStart(2,'0')).join('');
@@ -9,7 +10,14 @@ export async function handlePhoto(req:Request,env:PhotoEnv){
  const profile=await env.DB.prepare('SELECT status FROM cast_profiles WHERE id=?').bind(id).first<{status:string}>();
  if(!profile||(profile.status!=='approved'&&actor!==id))return json('写真がありません',404);
  const object=await env.BUCKET.get(await keyFor(id));if(!object)return json('写真がありません',404);
- return new Response(object.body,{headers:{'Content-Type':object.httpMetadata?.contentType||'image/jpeg','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
+ // Also sanitize photos uploaded before this protection was added.
+ let bytes:Uint8Array,type:string;
+ try{const clean=sanitizePhoto(new Uint8Array(await object.arrayBuffer()));bytes=clean.bytes;type=clean.type;}catch{return json('写真を読み取れません。キャストは写真を選び直してください',404);}
+ if(object.customMetadata?.privacyVersion!=='1'&&object.etag){
+ // Conditional replacement cannot overwrite a newer upload racing this request.
+ try{await env.BUCKET.put(await keyFor(id),bytes,{onlyIf:{etagMatches:object.etag},httpMetadata:{contentType:type},customMetadata:{privacyVersion:'1'}});}catch{/* The response still contains only sanitized bytes. */}
+ }
+ return new Response(new Uint8Array(bytes).buffer,{headers:{'Content-Type':type,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
  }
  if(req.method!=='POST')return json('POSTのみ利用できます',405);
  if(!actor||!req.headers.get('oai-authenticated-user-email'))return json('ログインしてください',401);
@@ -19,9 +27,8 @@ export async function handlePhoto(req:Request,env:PhotoEnv){
  const reader=req.body?.getReader();if(!reader)return json('写真を選択してください',400);
  const parts:Uint8Array[]=[];let length=0;while(true){const{done,value}=await reader.read();if(done)break;length+=value.length;if(length>max){await reader.cancel();return json('写真は3MB以下にしてください',413)}parts.push(value)}
  const bytes=new Uint8Array(length);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}
- let type='';if(length>=12&&bytes[0]===255&&bytes[1]===216&&bytes[2]===255)type='image/jpeg';else if(length>=24&&[137,80,78,71,13,10,26,10].every((n,i)=>bytes[i]===n))type='image/png';else if(length>=16&&new TextDecoder().decode(bytes.slice(0,4))==='RIFF'&&new TextDecoder().decode(bytes.slice(8,12))==='WEBP')type='image/webp';
- if(!type)return json('JPEG・PNG・WebP画像を選択してください',400);
- await env.BUCKET.put(await keyFor(actor),bytes,{httpMetadata:{contentType:type}});
+ let clean:{bytes:Uint8Array;type:string};try{clean=sanitizePhoto(bytes);}catch(e){return json((e as Error).message,400);}
+ await env.BUCKET.put(await keyFor(actor),clean.bytes,{httpMetadata:{contentType:clean.type},customMetadata:{privacyVersion:'1'}});
  const url='/api/cast-photo?id='+encodeURIComponent(actor)+'&v='+crypto.randomUUID();
  await env.DB.prepare('UPDATE cast_profiles SET photo_url=? WHERE id=?').bind(url,actor).run();
  return Response.json({url},{headers:{'Cache-Control':'no-store'}});
