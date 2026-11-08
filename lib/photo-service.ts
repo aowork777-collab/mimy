@@ -7,8 +7,8 @@ export async function handlePhoto(req:Request,env:PhotoEnv){
  const actor=req.headers.get('oai-authenticated-user-id');
  if(req.method==='GET'){
  const id=new URL(req.url).searchParams.get('id');if(!id||id.length>200)return json('写真がありません',404);
- const profile=await env.DB.prepare('SELECT status FROM cast_profiles WHERE id=?').bind(id).first<{status:string}>();
- if(!profile||(profile.status!=='approved'&&actor!==id))return json('写真がありません',404);
+ const profile=await env.DB.prepare('SELECT p.status,m.blocked FROM cast_profiles p JOIN members m ON m.id=p.id WHERE p.id=?').bind(id).first<{status:string;blocked:number}>();
+ if(!profile||profile.blocked||(profile.status!=='approved'&&actor!==id))return json('写真がありません',404);
  const object=await env.BUCKET.get(await keyFor(id));if(!object)return json('写真がありません',404);
  // Also sanitize photos uploaded before this protection was added.
  let bytes:Uint8Array,type:string;
@@ -22,7 +22,7 @@ export async function handlePhoto(req:Request,env:PhotoEnv){
  if(req.method!=='POST')return json('POSTのみ利用できます',405);
  if(!actor||!req.headers.get('oai-authenticated-user-email'))return json('ログインしてください',401);
  if(req.headers.get('origin')!==new URL(req.url).origin)return json('送信元が不正です',403);
- const profile=await env.DB.prepare("SELECT id FROM cast_profiles WHERE id=? AND status='approved'").bind(actor).first();if(!profile)return json('承認されたキャストのみ写真を変更できます',403);
+ const profile=await env.DB.prepare("SELECT id FROM cast_profiles WHERE id=? AND status='approved' AND id NOT IN (SELECT id FROM members WHERE blocked=1)").bind(actor).first();if(!profile)return json('承認されたキャストのみ写真を変更できます',403);
  const max=3*1024*1024;if(Number(req.headers.get('content-length')||0)>max)return json('写真は3MB以下にしてください',413);
  const reader=req.body?.getReader();if(!reader)return json('写真を選択してください',400);
  const parts:Uint8Array[]=[];let length=0;while(true){const{done,value}=await reader.read();if(done)break;length+=value.length;if(length>max){await reader.cancel();return json('写真は3MB以下にしてください',413)}parts.push(value)}

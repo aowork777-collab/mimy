@@ -6,12 +6,14 @@ import fs from 'node:fs';
 const compile=s=>ts.transpileModule(s,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
 const url=s=>'data:text/javascript;base64,'+Buffer.from(compile(s)).toString('base64');
 const catalog=url(fs.readFileSync('lib/catalog.ts','utf8'));
-const {handleWorkspace}=await import(url(fs.readFileSync('lib/workspace-service.ts','utf8').replace("'./catalog'",JSON.stringify(catalog))));
+globalThis.__guardJobs=[];globalThis.__guardFail=false;
+const guardMock=url(`export const guardConfigured=e=>!!e.CALL_GUARD_URL;export async function guardRequest(e,a,j){if(globalThis.__guardFail)throw Error('offline');globalThis.__guardJobs.push({action:a,...j});}`);
+const {handleWorkspace}=await import(url(fs.readFileSync('lib/workspace-service.ts','utf8').replace("'./catalog'",JSON.stringify(catalog)).replace("'./call-guard-client'",JSON.stringify(guardMock))));
 function setup(){
  const sql=new DatabaseSync(':memory:');sql.exec('PRAGMA foreign_keys=ON');
  for(const f of fs.readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())sql.exec(fs.readFileSync('drizzle/'+f,'utf8'));
  const db={prepare(text){return{bind(...args){return{run(){const r=sql.prepare(text).run(...args);return{meta:{changes:Number(r.changes)}}},first(){return sql.prepare(text).get(...args)||null},all(){return{results:sql.prepare(text).all(...args)}}}}}},batch(statements){sql.exec('BEGIN');try{const result=statements.map(s=>s.run());sql.exec('COMMIT');return result;}catch(e){sql.exec('ROLLBACK');throw e;}}};
- const env={DB:db,ADMIN_EMAILS:'owner@example.test'};
+ const env={DB:db,ADMIN_EMAILS:'owner@example.test',CALL_GUARD_URL:'https://guard.test'};
  async function req(who,body,origin='https://test.local',mail){const r=new Request('https://test.local/api/workspace',{method:body?'POST':'GET',headers:{...(who?{'oai-authenticated-user-id':who,'oai-authenticated-user-email':mail||who+'@example.test'}:{}),origin},...(body?{body:JSON.stringify(body)}:{})});const res=await handleWorkspace(r,env);return{status:res.status,body:await res.json(),headers:res.headers};}
  return{sql,req,env};
 }
@@ -96,7 +98,7 @@ test('shift ownership, cancellation ownership, malformed input and no automatic 
 const calls=[];
 globalThis.__voiceCalls=calls;
 const fakeSdk=url(`export class RoomServiceClient{async createRoom(o){globalThis.__voiceCalls.push(o)}async deleteRoom(n){globalThis.__voiceCalls.push({deleted:n})}}export class AccessToken{constructor(k,s,o){this.options=o}addGrant(g){this.grant=g}async toJwt(){return JSON.stringify({options:this.options,grant:this.grant})}}export const TrackSource={MICROPHONE:2,CAMERA:1};`);
-const {handleCall}=await import(url(fs.readFileSync('lib/call-service.ts','utf8').replace("'livekit-server-sdk'",JSON.stringify(fakeSdk))));
+const {handleCall}=await import(url(fs.readFileSync('lib/call-service.ts','utf8').replace("'livekit-server-sdk'",JSON.stringify(fakeSdk)).replace("'./call-guard-client'",JSON.stringify(guardMock))));
 test('voice: fail closed, participant authorization, time limits and camera and microphone grants without screen sharing',async()=>{
  const {sql,req,env}=setup();
  await req('alice');await req('bob');await req('cast',{action:'apply',name:'葵',bio:'紹介'});await req('owner',{action:'review',target:'cast',decision:'approve'});
@@ -222,4 +224,30 @@ test('transparent, progressive and animated photo containers remain supported',(
  for(const format of ['png_alpha','webp_alpha','jpeg_progressive','png_animated','webp_animated']){
   const clean=sanitizePhoto(fixture(format));assert.ok(clean.bytes.length>0);assert.deepEqual(sanitizePhoto(clean.bytes).bytes,clean.bytes);
  }
+});
+
+test('moderation: admin-only blocking stops APIs, hides cast, cancels reservations and can be lifted',async()=>{
+ const{req,sql,env}=setup();await req('alice');await req('bob');await req('cast',{action:'apply',name:'C',bio:'intro'});await req('owner',{action:'review',target:'cast',decision:'approve'});
+ const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;await req('cast',{action:'shiftAdd',starts:start});const shift=(await req('alice')).body.shifts[0].id;
+ const id=(await req('alice',{action:'reserve',shiftId:shift,minutes:30,course:'雑談',adult:true,agree:true})).body.id;await req('alice',{action:'pay',id});sql.prepare('UPDATE shifts SET starts=? WHERE id=?').run(Date.now()-1000,shift);
+ const block={action:'memberBlock',target:'alice',blocked:true,reason:'test violation'};
+ assert.equal((await req('bob',block)).status,403);assert.equal((await req('owner',{...block,target:'owner'})).status,400);
+ assert.equal((await req('owner',block)).status,200);assert.equal((await req('alice')).status,403);assert.equal((await req('alice',{action:'profile',name:'bypass'})).status,403);
+ assert.equal(sql.prepare('SELECT status FROM reservations WHERE id=?').get(id).status,'cancelled');assert.ok(globalThis.__guardJobs.some(j=>j.action==='close'&&j.id===id));
+ assert.equal((await req('bob')).body.members.length,0);assert.ok((await req('owner')).body.members.some(m=>m.id==='alice'&&m.blocked===1));
+ assert.equal((await req('owner',{...block,blocked:false,reason:''})).status,200);assert.equal((await req('alice')).status,200);
+ assert.equal(sql.prepare('SELECT status FROM reservations WHERE id=?').get(id).status,'cancelled');
+ await req('owner',{...block,target:'cast'});assert.equal((await req('bob')).body.casts.length,0);
+ env.BUCKET={get:async()=>{throw Error('must not read')}};assert.equal((await handlePhoto(new Request('https://test.local/api/cast-photo?id=cast'),env)).status,404);
+ const r=await handleCall(new Request('https://test.local/api/call',{method:'POST',headers:{origin:'https://test.local','oai-authenticated-user-id':'cast','oai-authenticated-user-email':'cast@example.test'},body:JSON.stringify({id,action:'join'})}),env);assert.equal(r.status,403);
+});
+
+test('guard registration is required before joining; unavailable scheduler fails closed',async()=>{
+ const{req,sql,env}=setup();await req('cast',{action:'apply',name:'C',bio:'intro'});await req('owner',{action:'review',target:'cast',decision:'approve'});
+ const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;await req('cast',{action:'shiftAdd',starts:start});const shift=(await req('alice')).body.shifts[0].id;const id=(await req('alice',{action:'reserve',shiftId:shift,minutes:30,course:'雑談',agree:true})).body.id;await req('alice',{action:'pay',id});sql.prepare('UPDATE shifts SET starts=? WHERE id=?').run(Date.now()-1000,shift);
+ Object.assign(env,{LIVEKIT_URL:'wss://test.livekit.cloud',LIVEKIT_API_KEY:'test',LIVEKIT_API_SECRET:'test',LIVEKIT_FREE_PLAN:'build'});
+ const call=()=>handleCall(new Request('https://test.local/api/call',{method:'POST',headers:{origin:'https://test.local','oai-authenticated-user-id':'alice','oai-authenticated-user-email':'alice@example.test'},body:JSON.stringify({id,action:'join'})}),env);
+ delete env.CALL_GUARD_URL;assert.equal((await call()).status,503);env.CALL_GUARD_URL='https://guard.test';
+ globalThis.__guardFail=true;const before=calls.length;try{assert.equal((await call()).status,503);assert.equal(calls.length,before);}finally{globalThis.__guardFail=false;}
+ assert.equal((await call()).status,200);assert.ok(globalThis.__guardJobs.some(j=>j.action==='schedule'&&j.id===id&&j.participants.includes('alice')));
 });

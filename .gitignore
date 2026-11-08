@@ -43,3 +43,6 @@ yarn-error.log*
 
 # OS metadata
 .DS_Store
+
+/infrastructure/call-guard/.sites-runtime/
+/infrastructure/call-guard/.wrangler/

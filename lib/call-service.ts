@@ -1,5 +1,6 @@
+import {guardConfigured,guardRequest} from './call-guard-client';
 import {AccessToken, RoomServiceClient, TrackSource} from 'livekit-server-sdk';
-export type CallEnv={DB?:D1Database;LIVEKIT_URL?:string;LIVEKIT_API_KEY?:string;LIVEKIT_API_SECRET?:string;LIVEKIT_FREE_PLAN?:string};
+export type CallEnv={CALL_GUARD_URL?:string;CALL_GUARD_SECRET?:string;DB?:D1Database;LIVEKIT_URL?:string;LIVEKIT_API_KEY?:string;LIVEKIT_API_SECRET?:string;LIVEKIT_FREE_PLAN?:string};
 const response=(data:unknown,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
 export function callConfigured(env:CallEnv){return !!(env.LIVEKIT_URL?.match(/^wss:\/\/[a-z0-9-]+\.livekit\.cloud$/i)&&env.LIVEKIT_API_KEY&&env.LIVEKIT_API_SECRET&&env.LIVEKIT_FREE_PLAN==='build');}
 export async function handleCall(req:Request,env:CallEnv){
@@ -8,8 +9,9 @@ export async function handleCall(req:Request,env:CallEnv){
  if(req.method!=='POST')return response({error:'POSTのみ利用できます'},405);
  if(req.headers.get('origin')!==new URL(req.url).origin)return response({error:'送信元が不正です'},403);
  if(!env.DB)return response({error:'データベースが未接続です'},503);
+ if(await env.DB.prepare('SELECT id FROM members WHERE id=? AND blocked=1').bind(actor).first())return response({error:'このアカウントは利用停止されています'},403);
  let input:{id?:string;action?:string};try{const raw=await req.text();if(raw.length>1000)throw Error();input=JSON.parse(raw);if(!input||typeof input.id!=='string'||!['join','check'].includes(input.action||''))throw Error();}catch{return response({error:'予約の指定が不正です'},400);}
- const booking=await env.DB.prepare('SELECT r.*,s.starts,p.status AS cast_status FROM reservations r JOIN shifts s ON s.id=r.shift_id JOIN cast_profiles p ON p.id=r.cast_id WHERE r.id=? AND (r.customer=? OR r.cast_id=?)').bind(input.id,actor,actor).first<{id:string;status:string;starts:number;minutes:number;cast_status:string}>();
+ const booking=await env.DB.prepare('SELECT r.*,s.starts,p.status AS cast_status FROM reservations r JOIN shifts s ON s.id=r.shift_id JOIN cast_profiles p ON p.id=r.cast_id WHERE r.id=? AND (r.customer=? OR r.cast_id=?) AND r.customer NOT IN (SELECT id FROM members WHERE blocked=1) AND r.cast_id NOT IN (SELECT id FROM members WHERE blocked=1)').bind(input.id,actor,actor).first<{id:string;status:string;starts:number;minutes:number;cast_status:string;customer:string;cast_id:string}>();
  if(!booking)return response({error:'予約が見つかりません'},404);
  if(!callConfigured(env))return response({error:'通話は準備中です。運営による無料プランの接続設定が必要です'},503);
  const end=booking.starts+booking.minutes*60000,now=Date.now();
@@ -22,9 +24,12 @@ export async function handleCall(req:Request,env:CallEnv){
   return response({error:now<booking.starts?'予約開始時刻になると参加できます':'この予約の通話は終了、取消、または停止されています'},409);
  }
  if(input.action==='check')return response({ok:true,endsAt:end});
+ if(!guardConfigured(env))return response({error:'通話終了サーバーの接続設定が必要です。運営に確認してください。'},503);
  try{
+  await guardRequest(env,'schedule',{id:booking.id,endsAt:end,participants:[booking.customer,booking.cast_id]});
   await service.createRoom({name:roomName,maxParticipants:2,emptyTimeout:60,departureTimeout:20});
-  const token=new AccessToken(env.LIVEKIT_API_KEY,env.LIVEKIT_API_SECRET,{identity:actor,ttl:Math.max(1,Math.min(60,Math.floor((end-now)/1000)))});
+  if(Date.now()>=end-1000){await service.deleteRoom(roomName);return response({error:'予約の通話時間が終了しました'},409);}
+  const token=new AccessToken(env.LIVEKIT_API_KEY,env.LIVEKIT_API_SECRET,{identity:actor,ttl:Math.max(1,Math.min(60,Math.floor((end-Date.now())/1000)))});
   token.addGrant({roomJoin:true,room:roomName,canSubscribe:true,canPublish:true,canPublishData:false,canPublishSources:[TrackSource.MICROPHONE,TrackSource.CAMERA]});
   return response({url:env.LIVEKIT_URL,token:await token.toJwt(),endsAt:end});
  }catch{return response({error:'通話サービスに接続できません。無料枠の残量と接続設定を運営に確認してください'},503);}
