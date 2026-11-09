@@ -16,3 +16,7 @@ export const reservations = sqliteTable('reservations',{id:text('id').primaryKey
 export const conversationMessages = sqliteTable('conversation_messages',{id:text('id').primaryKey(),reservation:text('reservation').notNull().references(()=>reservations.id),sender:text('sender').notNull().references(()=>members.id),body:text('body').notNull(),created:integer('created').notNull()},t=>[index('message_sender_created').on(t.sender,t.created)]);
 export const auditEvents = sqliteTable('audit_events',{id:text('id').primaryKey(),actor:text('actor').notNull(),target:text('target').notNull(),action:text('action').notNull(),created:integer('created').notNull()});
 export const adminInvites=sqliteTable('admin_invites',{id:text('id').primaryKey(),hash:text('hash').notNull().unique(),email:text('email').notNull(),creator:text('creator').notNull(),created:integer('created').notNull(),expires:integer('expires').notNull(),acceptedBy:text('accepted_by'),acceptedAt:integer('accepted_at'),revoked:integer('revoked').notNull().default(0)});
+
+// Verified Supabase identities map to stable member IDs; no passwords are stored in D1.
+export const authIdentities=sqliteTable('auth_identities',{authId:text('auth_id').primaryKey(),memberId:text('member_id').notNull().unique(),created:integer('created').notNull()});
+export const authRateLimits=sqliteTable('auth_rate_limits',{key:text('key').primaryKey(),bucket:integer('bucket').notNull(),count:integer('count').notNull()});

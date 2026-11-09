@@ -7,6 +7,8 @@
 > 現在はテスト決済です。実際の請求・返金・キャストへの送金はありません。
 > GitHubへのpushと、公開サイトへのデプロイは別の操作です。
 
+> メール認証のコードを追加済みです。確認メールの配信設定・実機確認が未完了のため、公開サイトは旧ログイン方式のままです。切替手順は[メール認証の設定](docs/email-auth-setup.md)を参照してください。
+
 ## 目次
 
 - [クイックスタート](#クイックスタート)
@@ -52,12 +54,12 @@ npx --yes pnpm@11.25.0 dev
 
 ターミナルのURL（通常 `http://localhost:5173`）を開きます。停止は `Ctrl+C`。
 
-通常のcloneはportableモードになり、ログインボタンで固定のローカルユーザー `local_seedy` / `seedy@sites.test` として入れます。本物のChatGPT認証ではありません。DB初期化だけではキャストや予約は作成されません。
+メールアドレスとパスワードでログインします。起動前に[メール認証の設定](docs/email-auth-setup.md)を行い、`.dev.vars` にSupabaseのURLとpublishable keyを設定してください。固定のローカルユーザーではAPIを利用できません。DB初期化だけではキャストや予約は作成されません。
 
 ローカル管理者を試す場合、未追跡の `.dev.vars` を作成します。
 
 ```dotenv
-ADMIN_EMAILS="seedy@sites.test"
+ADMIN_EMAILS="your-verified-email@example.com"
 ```
 
 変更後は開発サーバーを再起動してください。ローカルは固定ユーザーのため、複数人の役割検証は `tests/service.test.mjs`、実際の別アカウント操作は公開環境で行います。
@@ -137,6 +139,9 @@ JPEG・PNG・WebP、3MB以下。承認されたキャストだけが自分の写
 | 名前 | 用途 | ローカル／本番の設定場所 |
 |---|---|---|
 | `CALL_GUARD_URL` | 専用通話終了WorkerのHTTPS URL | Sitesランタイム環境変数 |
+| `SUPABASE_URL` | mimy専用AuthプロジェクトURL | `.dev.vars` / Sites環境変数 |
+| `SUPABASE_PUBLISHABLE_KEY` | 公開用キー。service_roleは使用しない | `.dev.vars` / Sites環境変数 |
+| `LEGACY_SITES_MIGRATION` | Sites上で旧IDを引き継ぐときだけ `enabled` | Sites環境変数 |
 | `ADMIN_EMAILS` | 初期管理者のメール一覧（カンマ区切り） | `.dev.vars` / Sites秘密環境変数 |
 | `LIVEKIT_URL` | `wss://…livekit.cloud` | 同上 |
 | `LIVEKIT_API_KEY` | LiveKit API key | 同上、公開禁止 |
@@ -199,3 +204,21 @@ pnpm build
 - 実決済・報酬送金・本人確認・通知・自動退会・写真の自動審査は未実装です。
 - 規約とプライバシー案内は運営情報などの確定が必要なドラフトです。
 - 自動テストはSQLite／外部通信モック中心です。実ブラウザー・複数端末間通話は別途確認が必要です。
+
+## メールアドレスでの認証
+
+[セットアップと移行手順](docs/email-auth-setup.md) · [認証テスト](tests/email-auth.test.mjs)
+
+| 編集先 | 役割 |
+| --- | --- |
+| `app/login/page.tsx` | 新規登録・ログイン・パスワード再設定画面 |
+| `app/auth/confirm/` | メールの確認リンクと確認ボタン |
+| `app/api/auth/route.ts` / `lib/email-auth.ts` | Supabase Auth連携・Cookie・API本人確認・試行回数制限 |
+| `components/logout-button.tsx` | 設定画面からログアウト |
+| `drizzle/0007_ordinary_stryfe.sql` | 認証ID対応表と試行回数の保存。既存データは変更しない |
+
+```bash
+node --test tests/*.test.mjs
+pnpm exec tsc --noEmit
+pnpm build
+```
