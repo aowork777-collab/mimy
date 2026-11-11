@@ -35,7 +35,7 @@ async function memberIdentity(req:Request,env:AuthEnv,user:User){
  const oldId=req.headers.get('oai-authenticated-user-id');
  const oldEmail=req.headers.get('oai-authenticated-user-email')?.trim().toLowerCase();
  let member='email:'+user.id;
- if(env.LEGACY_SITES_MIGRATION==='enabled'&&new URL(req.url).hostname.endsWith('.chatgpt.site')&&oldId&&oldEmail===user.email?.trim().toLowerCase()){
+ if(env.LEGACY_SITES_MIGRATION==='enabled'&&oldId&&oldEmail===user.email?.trim().toLowerCase()){
   const old=await db.prepare('SELECT id FROM members WHERE id=?').bind(oldId).first();
   if(old)member=oldId;
  }
@@ -47,6 +47,14 @@ async function memberIdentity(req:Request,env:AuthEnv,user:User){
 export async function withEmailIdentity(req:Request,env:AuthEnv,handler:(req:Request)=>Promise<Response>,publicRead=false){
  try{
   const identity=await authenticate(req,env);
+  if(!identity&&env.LEGACY_SITES_MIGRATION==='enabled'&&env.DB&&!cookies(req)[accessName]){
+   const legacyId=req.headers.get('oai-authenticated-user-id');
+   const legacyEmail=req.headers.get('oai-authenticated-user-email');
+   if(legacyId&&legacyEmail){
+    const member=await env.DB.prepare('SELECT id FROM members WHERE id=?').bind(legacyId).first();
+    if(member)return handler(req);
+   }
+  }
   const headers=new Headers(req.headers);headers.delete('oai-authenticated-user-id');headers.delete('oai-authenticated-user-email');
   if(!identity&&!publicRead)return reply({error:'メールアドレスとパスワードでログインしてください'},401);
   if(identity){headers.set('oai-authenticated-user-id',await memberIdentity(req,env,identity.user));headers.set('oai-authenticated-user-email',identity.user.email!);}
@@ -78,7 +86,8 @@ export async function handleAuth(req:Request,env:AuthEnv){
  if(a.action==='logout'){
   const identity=await authenticate(req,env);
   if(identity)await client.auth.admin.signOut(identity.token,'local');
-  const res=reply({ok:true});sessionCookies(res,req,null);return res;
+  const legacy=env.LEGACY_SITES_MIGRATION==='enabled'&&req.headers.has('oai-authenticated-user-id');
+  const res=reply({ok:true,next:legacy?'/signout-with-chatgpt?return_to=%2Flogin':'/login'});sessionCookies(res,req,null);return res;
  }
  if(a.action==='password'){
   const identity=await authenticate(req,env);if(!identity)return reply({error:'再設定メールを開くか、ログインしてください'},401);

@@ -20,5 +20,5 @@ export default function Login(){
  <button className="primary" disabled={busy}>{busy?'確認中…':mode==='login'?'ログイン':mode==='signup'?'確認メールを送って登録':mode==='reset'?'再設定メールを送る':'パスワードを保存'}</button></form>
  {error&&<p role="alert" className="alert">{error}</p>}{message&&<p role="status" className="notice">{message}</p>}
  <div className="auth-links">{mode!=='login'&&<button className="secondary" disabled={busy} onClick={()=>change('login')}>ログインへ戻る</button>}{mode==='login'&&<><button className="secondary" disabled={busy} onClick={()=>change('signup')}>はじめての方・新規登録</button><button className="secondary" disabled={busy} onClick={()=>change('reset')}>パスワードを忘れた方</button></>}</div>
- <p className="muted">ChatGPTのアカウントは必要ありません。</p></section></InfoShell>
+ {mode==='login'&&<p className="muted">以前からご利用の方は、引き継ぎのために<a href="/signin-with-chatgpt?return_to=%2Flogin" target="_top">先に従来のアカウントでログイン</a>し、同じメールアドレスでメールログインしてください。</p>}</section></InfoShell>
 }
