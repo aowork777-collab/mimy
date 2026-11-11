@@ -57,6 +57,13 @@
       "when": 1794216476889,
       "tag": "0007_ordinary_stryfe",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1794409938182,
+      "tag": "0008_outgoing_angel",
+      "breakpoints": true
     }
   ]
 }

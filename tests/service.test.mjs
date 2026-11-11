@@ -47,7 +47,7 @@ test('separate accounts: approval, shifts, shared inventory and private conversa
  const winner=result[0].status===200?'alice':'bob',loser=winner==='alice'?'bob':'alice';
  const id=result.find(r=>r.status===200).body.id;
  assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM reservations').get().n,1);
- assert.equal((await req(winner)).body.reservations[0].price,3000);
+ assert.equal((await req(winner)).body.reservations[0].price,1990);
  assert.equal((await req(loser)).body.shifts.length,0);
  assert.equal((await req(loser)).body.reservations.length,0);
  assert.equal((await req('cast')).body.reservations.length,1);
@@ -250,4 +250,25 @@ test('guard registration is required before joining; unavailable scheduler fails
  delete env.CALL_GUARD_URL;assert.equal((await call()).status,503);env.CALL_GUARD_URL='https://guard.test';
  globalThis.__guardFail=true;const before=calls.length;try{assert.equal((await call()).status,503);assert.equal(calls.length,before);}finally{globalThis.__guardFail=false;}
  assert.equal((await call()).status,200);assert.ok(globalThis.__guardJobs.some(j=>j.action==='schedule'&&j.id===id&&j.participants.includes('alice')));
+});
+
+test('pricing tiers: administrator-only changes, four prices and frozen reservation amounts',async()=>{
+ const {req}=setup();
+ await req('cast',{action:'apply',name:'料金テスト',bio:'テスト'});
+ await req('owner',{action:'review',target:'cast',decision:'approve'});
+ assert.equal((await req('cast',{action:'pricingTier',target:'cast',tier:'popular'})).status,403);
+ assert.equal((await req('owner',{action:'pricingTier',target:'cast',tier:'premium'})).status,400);
+ const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;
+ for(const [index,tier,minutes,price] of [[0,'new',30,1990],[1,'new',60,3980],[2,'popular',30,2990],[3,'popular',60,5980]]){
+  await req('owner',{action:'pricingTier',target:'cast',tier});
+  await req('cast',{action:'shiftAdd',starts:start+index*3600000});
+  const shift=(await req('alice')).body.shifts.find(s=>s.starts===start+index*3600000);
+  const input={action:'reserve',shiftId:shift.id,minutes,course:'雑談',agree:true};
+  assert.equal((await req('alice',{...input,quotedPrice:1})).status,409);
+  const result=await req('alice',{...input,quotedPrice:price});
+  assert.equal(result.status,200);
+  await req('owner',{action:'pricingTier',target:'cast',tier:tier==='new'?'popular':'new'});
+  assert.equal((await req('alice')).body.reservations.find(r=>r.id===result.body.id).price,price);
+  assert.equal((await req('alice',{action:'pay',id:result.body.id})).status,200);
+ }
 });

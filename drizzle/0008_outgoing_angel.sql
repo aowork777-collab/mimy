@@ -1,0 +1,1 @@
+ALTER TABLE `cast_profiles` ADD `pricing_tier` text DEFAULT 'new' NOT NULL;
