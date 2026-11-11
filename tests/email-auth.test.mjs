@@ -32,7 +32,7 @@ test('rejects unconfirmed email, bad credentials and cross-origin login',async()
  s.setBad();assert.equal((await handleAuth(s.request({action:'login',email:s.user.email,password:'wrong'}),s.env)).status,401);
 });
 test('trusted platform headers alone are not a login; verified email owns stable member ID',async()=>{
- const s=setup();const handler=async r=>Response.json({id:r.headers.get('oai-authenticated-user-id'),email:r.headers.get('oai-authenticated-user-email')});
+ const s=setup();const handler=async identity=>Response.json(identity||{id:null,email:null});
  const request=headers=>new Request('https://test.chatgpt.site/api/workspace',{headers});
  const fake={'oai-authenticated-user-id':'admin','oai-authenticated-user-email':'owner@example.test'};
  assert.equal((await withEmailIdentity(request(fake),s.env,handler)).status,401);
@@ -44,10 +44,11 @@ test('legacy migration requires opt-in and matching verified email; keeps blocke
  const s=setup();s.env.LEGACY_SITES_MIGRATION='enabled';s.sql.prepare("INSERT INTO members(id,name,role,created,blocked) VALUES('old-id','old','cast',1,1)").run();
  const headers={'oai-authenticated-user-id':'old-id','oai-authenticated-user-email':s.user.email};
  const request=headers=>new Request('https://mimy.example-jp.com/api/workspace',{headers});
- const handler=async r=>Response.json({id:r.headers.get('oai-authenticated-user-id')});
+ const handler=async identity=>Response.json({id:identity?.id});
  const legacy=await withEmailIdentity(request(headers),s.env,handler);
  assert.equal((await legacy.json()).id,'old-id');
  assert.equal((await withEmailIdentity(request({...headers,'oai-authenticated-user-id':'unknown'}),s.env,handler)).status,401);
+ s.sql.prepare('INSERT INTO auth_identities(auth_id,member_id,created) VALUES(?,?,1)').run(s.user.id,'email:'+s.user.id);
  const res=await withEmailIdentity(request({...headers,cookie:s.cookie}),s.env,handler);
  assert.equal((await res.json()).id,'old-id');assert.equal(s.sql.prepare("SELECT blocked FROM members WHERE id='old-id'").get().blocked,1);
  assert.equal(s.sql.prepare('SELECT count(*) n FROM members').get().n,1);

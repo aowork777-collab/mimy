@@ -1,11 +1,15 @@
+import type {MemberIdentity} from './email-auth';
 import {guardConfigured,guardRequest} from './call-guard-client';
 import {AccessToken, RoomServiceClient, TrackSource} from 'livekit-server-sdk';
 export type CallEnv={CALL_GUARD_URL?:string;CALL_GUARD_SECRET?:string;DB?:D1Database;LIVEKIT_URL?:string;LIVEKIT_API_KEY?:string;LIVEKIT_API_SECRET?:string;LIVEKIT_FREE_PLAN?:string};
 const response=(data:unknown,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
 export function callConfigured(env:CallEnv){return !!(env.LIVEKIT_URL?.match(/^wss:\/\/[a-z0-9-]+\.livekit\.cloud$/i)&&env.LIVEKIT_API_KEY&&env.LIVEKIT_API_SECRET&&env.LIVEKIT_FREE_PLAN==='build');}
-export async function handleCall(req:Request,env:CallEnv){
- const actor=req.headers.get('oai-authenticated-user-id');
- if(!actor||!req.headers.get('oai-authenticated-user-email'))return response({error:'ログインが必要です'},401);
+export async function handleCall(req:Request,env:CallEnv,identity:MemberIdentity|null={
+ id:req.headers.get('oai-authenticated-user-id')||'',
+ email:req.headers.get('oai-authenticated-user-email')||'',
+}){
+ const actor=identity?.id;
+ if(!actor||!identity?.email)return response({error:'ログインが必要です'},401);
  if(req.method!=='POST')return response({error:'POSTのみ利用できます'},405);
  if(req.headers.get('origin')!==new URL(req.url).origin)return response({error:'送信元が不正です'},403);
  if(!env.DB)return response({error:'データベースが未接続です'},503);

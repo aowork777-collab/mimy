@@ -1,4 +1,5 @@
 import {createClient, type Session, type User} from '@supabase/supabase-js';
+export type MemberIdentity = {id:string;email:string};
 export type AuthEnv = {DB?:D1Database;SUPABASE_URL?:string;SUPABASE_PUBLISHABLE_KEY?:string;LEGACY_SITES_MIGRATION?:string};
 const accessName='mimy_access',refreshName='mimy_refresh';
 const reply=(body:unknown,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'no-store'}});
@@ -30,7 +31,6 @@ async function memberIdentity(req:Request,env:AuthEnv,user:User){
  if(!env.DB)throw Error('データベースが未接続です');
  const db=env.DB;
  const mapped=await db.prepare('SELECT member_id FROM auth_identities WHERE auth_id=?').bind(user.id).first<{member_id:string}>();
- if(mapped)return mapped.member_id;
  // Only the platform's trusted identity AND the verified email can authorize legacy data migration.
  const oldId=req.headers.get('oai-authenticated-user-id');
  const oldEmail=req.headers.get('oai-authenticated-user-email')?.trim().toLowerCase();
@@ -39,29 +39,41 @@ async function memberIdentity(req:Request,env:AuthEnv,user:User){
   const old=await db.prepare('SELECT id FROM members WHERE id=?').bind(oldId).first();
   if(old)member=oldId;
  }
- await db.prepare('INSERT OR IGNORE INTO auth_identities(auth_id,member_id,created) VALUES(?,?,?)').bind(user.id,member,Date.now()).run();
+ if(mapped){
+  // A failed first visit can leave a mapping without a member or any member data.
+  if(member!==mapped.member_id&&mapped.member_id==='email:'+user.id){
+   await db.prepare('UPDATE OR IGNORE auth_identities SET member_id=? WHERE auth_id=? AND member_id=? AND NOT EXISTS (SELECT 1 FROM members WHERE id=?)').bind(member,user.id,mapped.member_id,mapped.member_id).run();
+  }else return mapped.member_id;
+ }else await db.prepare('INSERT OR IGNORE INTO auth_identities(auth_id,member_id,created) VALUES(?,?,?)').bind(user.id,member,Date.now()).run();
  const result=await db.prepare('SELECT member_id FROM auth_identities WHERE auth_id=?').bind(user.id).first<{member_id:string}>();
  if(!result)throw Error('この既存アカウントは別のログインに連携済みです。運営へお問い合わせください。');
  return result.member_id;
 }
-export async function withEmailIdentity(req:Request,env:AuthEnv,handler:(req:Request)=>Promise<Response>,publicRead=false){
+export async function withEmailIdentity(req:Request,env:AuthEnv,handler:(identity:MemberIdentity|null)=>Promise<Response>,publicRead=false){
+ let stage='session';
  try{
   const identity=await authenticate(req,env);
-  if(!identity&&env.LEGACY_SITES_MIGRATION==='enabled'&&env.DB&&!cookies(req)[accessName]){
-   const legacyId=req.headers.get('oai-authenticated-user-id');
-   const legacyEmail=req.headers.get('oai-authenticated-user-email');
-   if(legacyId&&legacyEmail){
-    const member=await env.DB.prepare('SELECT id FROM members WHERE id=?').bind(legacyId).first();
-    if(member)return handler(req);
+  stage='member';
+  let member:MemberIdentity|null=null;
+  if(identity){
+   member={id:await memberIdentity(req,env,identity.user),email:identity.user.email!};
+  }else if(env.LEGACY_SITES_MIGRATION==='enabled'&&env.DB&&!cookies(req)[accessName]){
+   const id=req.headers.get('oai-authenticated-user-id');
+   const email=req.headers.get('oai-authenticated-user-email');
+   if(id&&email&&await env.DB.prepare('SELECT id FROM members WHERE id=?').bind(id).first()){
+    member={id,email};
    }
   }
-  const headers=new Headers(req.headers);headers.delete('oai-authenticated-user-id');headers.delete('oai-authenticated-user-email');
-  if(!identity&&!publicRead)return reply({error:'メールアドレスとパスワードでログインしてください'},401);
-  if(identity){headers.set('oai-authenticated-user-id',await memberIdentity(req,env,identity.user));headers.set('oai-authenticated-user-email',identity.user.email!);}
-  const res=await handler(new Request(req,{headers}));
+  if(!member&&!publicRead)return reply({error:'メールアドレスとパスワードでログインしてください'},401);
+  stage='handler';
+  const res=await handler(member);
+  stage='cookies';
   if(identity?.replacement)sessionCookies(res,req,identity.replacement);
   return res;
- }catch{return reply({error:'認証を確認できません。しばらくしてからお試しください。'},503);}
+ }catch(error){
+  console.error('Account request failed',stage,error instanceof Error?error.name:'Unknown');
+  return reply({error:'認証を確認できません。しばらくしてからお試しください。'},503);
+ }
 }
 export async function handleAuth(req:Request,env:AuthEnv){
  if(req.method!=='POST')return reply({error:'POSTのみ利用できます'},405);

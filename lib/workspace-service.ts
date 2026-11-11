@@ -1,3 +1,4 @@
+import type {MemberIdentity} from './email-auth';
 import {guardRequest,guardConfigured} from './call-guard-client';
 import {plans} from './catalog';
 type Environment={CALL_GUARD_URL?:string;CALL_GUARD_SECRET?:string;DB?:D1Database;ADMIN_EMAILS?:string;LIVEKIT_URL?:string;LIVEKIT_API_KEY?:string;LIVEKIT_API_SECRET?:string;LIVEKIT_FREE_PLAN?:string};
@@ -5,9 +6,12 @@ const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{'Cache
 class Failure extends Error{constructor(public status:number,message:string){super(message);}}
 const requireThat=(ok:unknown,status:number,message:string)=>{if(!ok)throw new Failure(status,message);};
 const text=(s:unknown,max:number)=>typeof s==='string'&&s.trim().length>0&&s.trim().length<=max;
-export async function handleWorkspace(req:Request,env:Environment){
+export async function handleWorkspace(req:Request,env:Environment,identity:MemberIdentity|null={
+ id:req.headers.get('oai-authenticated-user-id')||'',
+ email:req.headers.get('oai-authenticated-user-email')||'',
+}){
  try{
- const id=req.headers.get('oai-authenticated-user-id'),email=req.headers.get('oai-authenticated-user-email');
+ const id=identity?.id,email=identity?.email;
  requireThat(id&&email,401,'ログインが必要です');const actor=id!;
  if(req.method==='POST')requireThat(req.headers.get('origin')===new URL(req.url).origin,403,'送信元が不正です');
  requireThat(env.DB,503,'データベースが未接続です');const db=env.DB!;const now=Date.now();

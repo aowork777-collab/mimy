@@ -1,10 +1,14 @@
+import type {MemberIdentity} from './email-auth';
 import {sanitizePhoto} from './photo-sanitizer';
 type PhotoEnv={DB?:D1Database;BUCKET?:R2Bucket};
 const json=(error:string,status:number)=>Response.json({error},{status,headers:{'Cache-Control':'no-store'}});
 const keyFor=async(id:string)=>'cast-photos/'+Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(id))),b=>b.toString(16).padStart(2,'0')).join('');
-export async function handlePhoto(req:Request,env:PhotoEnv){
+export async function handlePhoto(req:Request,env:PhotoEnv,identity:MemberIdentity|null={
+ id:req.headers.get('oai-authenticated-user-id')||'',
+ email:req.headers.get('oai-authenticated-user-email')||'',
+}){
  if(!env.DB||!env.BUCKET)return json('写真の保存先が準備できていません',503);
- const actor=req.headers.get('oai-authenticated-user-id');
+ const actor=identity?.id;
  if(req.method==='GET'){
  const id=new URL(req.url).searchParams.get('id');if(!id||id.length>200)return json('写真がありません',404);
  const profile=await env.DB.prepare('SELECT p.status,m.blocked FROM cast_profiles p JOIN members m ON m.id=p.id WHERE p.id=?').bind(id).first<{status:string;blocked:number}>();
@@ -20,7 +24,7 @@ export async function handlePhoto(req:Request,env:PhotoEnv){
  return new Response(new Uint8Array(bytes).buffer,{headers:{'Content-Type':type,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
  }
  if(req.method!=='POST')return json('POSTのみ利用できます',405);
- if(!actor||!req.headers.get('oai-authenticated-user-email'))return json('ログインしてください',401);
+ if(!actor||!identity?.email)return json('ログインしてください',401);
  if(req.headers.get('origin')!==new URL(req.url).origin)return json('送信元が不正です',403);
  const profile=await env.DB.prepare("SELECT id FROM cast_profiles WHERE id=? AND status='approved' AND id NOT IN (SELECT id FROM members WHERE blocked=1)").bind(actor).first();if(!profile)return json('承認されたキャストのみ写真を変更できます',403);
  const max=3*1024*1024;if(Number(req.headers.get('content-length')||0)>max)return json('写真は3MB以下にしてください',413);
