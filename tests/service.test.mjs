@@ -363,3 +363,73 @@ test('optional guest profiles stay private, role groups filter, and diary owners
  assert.equal((await req('cast',{action:'diaryDelete',id:post.id})).status,200);
  assert.deepEqual((await get('alice',{diaryCast:'cast'})).body.posts,[]);
 });
+
+const {handleDiaryPhoto}=await import(url(fs.readFileSync('lib/diary-photo-service.ts','utf8').replace("'./photo-sanitizer'",JSON.stringify(photoSanitizer))));
+test('favorites personalize ordering, reveal only fan names, and gate diary text plus photo URLs',async()=>{
+ const {req,env,sql}=setup();
+ for(const [id,name] of [['cast','Zキャスト'],['othercast','Aキャスト']]){
+  await req(id,{action:'apply',name,bio:'紹介'});
+  await req('owner',{action:'review',target:id,decision:'approve'});
+ }
+ await req('alice',{action:'profile',name:'ありす'});
+ await req('bob',{action:'profile',name:'ぼぶ'});
+ const read=async(who,params)=>{
+  const response=await handleWorkspace(new Request('https://test.local/api/workspace?'+new URLSearchParams(params)),env,{id:who,email:who+'@example.test'});
+  return {status:response.status,body:await response.json()};
+ };
+ assert.equal((await req('alice')).body.casts[0].id,'othercast');
+ assert.equal((await req('cast',{action:'favorite',castId:'cast',enabled:true})).status,400);
+ for(let i=0;i<2;i++)assert.equal((await req('alice',{action:'favorite',castId:'cast',enabled:true})).status,200);
+ assert.equal((await req('alice')).body.casts[0].id,'cast');
+ assert.equal((await req('bob')).body.casts[0].id,'othercast');
+ assert.equal((await read('alice',{fans:'1'})).status,403);
+ assert.deepEqual((await read('cast',{fans:'1'})).body,{names:['ありす'],count:1,hasNext:false});
+ const files=new Map();
+ env.BUCKET={
+  async put(key,bytes,options){files.set(key,{arrayBuffer:async()=>bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength),httpMetadata:options.httpMetadata});},
+  async get(key){return files.get(key)||null;},
+ };
+ const identity=who=>who?{id:who,email:who+'@example.test'}:null;
+ const upload=(who,bytes=fixture('png'),origin='https://test.local')=>handleDiaryPhoto(new Request('https://test.local/api/diary-photo',{method:'POST',headers:{origin},body:bytes}),env,identity(who));
+ const image=(who,id)=>handleDiaryPhoto(new Request('https://test.local/api/diary-photo?id='+id),env,identity(who));
+ assert.equal((await upload('alice')).status,403);
+ assert.equal((await upload('cast',fixture('png'),'https://evil.test')).status,403);
+ assert.equal((await upload('cast',Buffer.from('<svg/>'))).status,400);
+ assert.equal((await upload('cast',new Uint8Array(3*1024*1024+1))).status,413);
+ const response=await upload('cast');
+ assert.equal(response.status,200);
+ const photoId=(await response.json()).id;
+ assert.equal((await image('cast',photoId)).status,200);
+ assert.equal((await image('alice',photoId)).status,404,'draft remains private even for a fan');
+ assert.equal((await image(null,photoId)).status,401);
+ assert.equal((await req('othercast',{action:'diarySave',title:'他人の写真',body:'本文',photoId})).status,400);
+ await req('cast',{action:'diarySave',title:'限定',body:'限定本文',visibility:'fans',photoId});
+ let post=(await read('cast',{diaryCast:'cast'})).body.posts[0];
+ assert.equal((await read('bob',{diaryCast:'cast'})).body.posts.length,0);
+ assert.equal((await read('owner',{diaryCast:'cast'})).body.posts.length,0,'admin has no exclusive-content override');
+ assert.equal((await read('alice',{diaryCast:'cast'})).body.posts[0].body,'限定本文');
+ assert.equal((await image('bob',photoId)).status,404);
+ const authorizedImage=await image('alice',photoId);
+ assert.equal(authorizedImage.status,200);
+ assert.match(authorizedImage.headers.get('cache-control'),/no-store/);
+ assert.deepEqual(Buffer.from(await authorizedImage.arrayBuffer()),Buffer.from(sanitizePhoto(fixture('png')).bytes));
+ assert.equal((await req('cast',{action:'diarySave',title:'再使用',body:'本文',photoId,visibility:'public'})).status,409);
+ await req('alice',{action:'favorite',castId:'cast',enabled:false});
+ assert.equal((await read('alice',{diaryCast:'cast'})).body.posts.length,0);
+ assert.equal((await image('alice',photoId)).status,404);
+ assert.deepEqual((await read('cast',{fans:'1'})).body,{names:[],count:0,hasNext:false});
+ // Old clients editing without new fields retain the original audience and attachment.
+ await req('cast',{action:'diarySave',id:post.id,title:'更新',body:'本文'});
+ post=(await read('cast',{diaryCast:'cast'})).body.posts[0];
+ assert.equal(post.visibility,'fans');assert.equal(post.photo_id,photoId);
+ await req('cast',{action:'diarySave',id:post.id,title:'公開',body:'本文',visibility:'public',photoId});
+ assert.equal((await image('bob',photoId)).status,200);
+ await req('cast',{action:'diarySave',id:post.id,title:'限定に変更',body:'本文',visibility:'fans',photoId});
+ assert.equal((await image('bob',photoId)).status,404);
+ await req('bob',{action:'favorite',castId:'cast',enabled:true});
+ sql.prepare("UPDATE members SET blocked=1 WHERE id='bob'").run();
+ assert.equal((await image('bob',photoId)).status,403);
+ assert.equal((await read('cast',{fans:'1'})).body.count,0);
+ await req('cast',{action:'diaryDelete',id:post.id});
+ assert.equal((await image('alice',photoId)).status,404);
+});

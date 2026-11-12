@@ -76,14 +76,24 @@ export async function handleWorkspace(req:Request,env:Environment,identity:Membe
   requireThat(admin,403,'管理者のみアカウントの詳細を確認できます');
   return await memberHistory(db,params,now);
  }
+ if(req.method==='GET'&&params.has('fans')){
+  requireThat(role==='cast',403,'キャストのみ確認できます');
+  const page=Number(params.get('page')||0);
+  requireThat(Number.isSafeInteger(page)&&page>=0&&page<=100000,400,'ページが不正です');
+  const fans=await rows('SELECT m.name FROM cast_favorites f JOIN members m ON m.id=f.member_id WHERE f.cast_id=? AND m.blocked=0 ORDER BY f.created DESC,f.member_id LIMIT 51 OFFSET ?',actor,page*50);
+  const count=await q('SELECT COUNT(*) n FROM cast_favorites f JOIN members m ON m.id=f.member_id WHERE f.cast_id=? AND m.blocked=0',actor).first<{n:number}>();
+  return json({names:fans.slice(0,50).map(f=>f.name),count:count!.n,hasNext:fans.length>50});
+ }
  if(req.method==='GET'&&params.has('diaryCast')){
   const castId=params.get('diaryCast')||'';
   const page=Number(params.get('page')||0);
   requireThat(Number.isSafeInteger(page)&&page>=0&&page<=100000,400,'ページが不正です');
   const visible=await q("SELECT p.id FROM cast_profiles p JOIN members m ON m.id=p.id WHERE p.id=? AND p.status='approved' AND m.blocked=0",castId).first();
   requireThat(visible,404,'キャストが見つかりません');
-  const posts=await rows('SELECT id,title,body,created,updated FROM cast_posts WHERE cast_id=? ORDER BY created DESC,id DESC LIMIT 11 OFFSET ?',castId,page*10);
-  return json({posts:posts.slice(0,10),hasNext:posts.length>10});
+  const favorite=await q('SELECT 1 FROM cast_favorites WHERE member_id=? AND cast_id=?',actor,castId).first();
+  const allowed=actor===castId||!!favorite;
+  const posts=await rows("SELECT id,title,body,created,updated,visibility,photo_id FROM cast_posts WHERE cast_id=? AND (visibility='public' OR ?=1) ORDER BY created DESC,id DESC LIMIT 11 OFFSET ?",castId,allowed?1:0,page*10);
+  return json({posts:posts.slice(0,10),hasNext:posts.length>10,exclusiveLocked:!allowed});
  }
  const audit=(target:string,action:string)=>q('INSERT INTO audit_events VALUES(?,?,?,?,?)',crypto.randomUUID(),actor,target,action,now);
  // Expiry is checked on every request; the partial unique index releases the slot atomically.
@@ -96,10 +106,21 @@ export async function handleWorkspace(req:Request,env:Environment,identity:Membe
  const roleFilter=memberRole==='all'?'1=1':memberRole==='admin'?'admin_protected=1':"admin_protected=0 AND role='"+memberRole+"'";
  const memberFilter="(name LIKE ? OR id LIKE ?) AND ("+roleFilter+")";
  const reservations=await rows(`SELECT r.*,s.starts,p.name AS cast_name,m.name AS customer_name FROM reservations r JOIN shifts s ON s.id=r.shift_id JOIN cast_profiles p ON p.id=r.cast_id JOIN members m ON m.id=r.customer WHERE ${admin?'1=1':'(r.customer=? OR r.cast_id=?)'} ORDER BY s.starts DESC`,...(admin?[]:[actor,actor]));
- return json({guestProfile:await q('SELECT bio,topics,style FROM guest_profiles WHERE id=?',actor).first(),members:admin?await rows('SELECT id,name,role,blocked,block_reason,admin_protected,created FROM members WHERE '+memberFilter+' ORDER BY created DESC,id LIMIT 50 OFFSET ?',search,search,Math.floor(memberPage)*50):[],memberTotal:admin?(await q('SELECT COUNT(*) n FROM members WHERE '+memberFilter,search,search).first<{n:number}>())!.n:0,adminInvites:admin?await rows('SELECT id,email,created,expires,accepted_by,accepted_at,revoked FROM admin_invites ORDER BY created DESC LIMIT 100'):[],me:{id:actor,name:me!.name,role},profile,casts:await rows("SELECT id,name,bio,headline,photo_url,topics,hobbies,style,pricing_tier FROM cast_profiles WHERE status='approved' AND id NOT IN (SELECT id FROM members WHERE blocked=1)"),shifts:await rows("SELECT s.* FROM shifts s JOIN cast_profiles p ON p.id=s.cast_id WHERE s.enabled=1 AND p.status='approved' AND s.cast_id NOT IN (SELECT id FROM members WHERE blocked=1) AND s.starts>? AND NOT EXISTS(SELECT 1 FROM reservations r WHERE r.shift_id=s.id AND r.status IN ('held','confirmed','completed')) ORDER BY s.starts",now+900000),ownShifts:role==='cast'?await rows('SELECT s.*,r.status AS reservation_status FROM shifts s LEFT JOIN reservations r ON r.shift_id=s.id AND r.status IN (\'held\',\'confirmed\',\'completed\') WHERE s.cast_id=? AND s.starts>? ORDER BY s.starts',actor,now-86400000):[],reservations,messages:await rows("SELECT cm.*,m.name AS sender_name FROM conversation_messages cm JOIN reservations r ON r.id=cm.reservation JOIN members m ON m.id=cm.sender WHERE r.customer=? OR r.cast_id=? ORDER BY cm.created,cm.id",actor,actor),applications:admin?await rows('SELECT * FROM cast_profiles ORDER BY status,name'):[],events:admin?await rows('SELECT * FROM audit_events ORDER BY created DESC LIMIT 100'):[],reports:admin?await rows('SELECT p.* FROM reports p JOIN reservations r ON r.id=p.booking ORDER BY p.created DESC'):[],voiceConfigured:guardConfigured(env)&&!!(env.LIVEKIT_URL?.match(/^wss:\/\/[a-z0-9-]+\.livekit\.cloud$/i)&&env.LIVEKIT_API_KEY&&env.LIVEKIT_API_SECRET&&env.LIVEKIT_FREE_PLAN==='build'),paymentMode:'test'});
+ return json({guestProfile:await q('SELECT bio,topics,style FROM guest_profiles WHERE id=?',actor).first(),members:admin?await rows('SELECT id,name,role,blocked,block_reason,admin_protected,created FROM members WHERE '+memberFilter+' ORDER BY created DESC,id LIMIT 50 OFFSET ?',search,search,Math.floor(memberPage)*50):[],memberTotal:admin?(await q('SELECT COUNT(*) n FROM members WHERE '+memberFilter,search,search).first<{n:number}>())!.n:0,adminInvites:admin?await rows('SELECT id,email,created,expires,accepted_by,accepted_at,revoked FROM admin_invites ORDER BY created DESC LIMIT 100'):[],me:{id:actor,name:me!.name,role},profile,casts:await rows("SELECT p.id,p.name,p.bio,p.headline,p.photo_url,p.topics,p.hobbies,p.style,p.pricing_tier,EXISTS(SELECT 1 FROM cast_favorites f WHERE f.member_id=? AND f.cast_id=p.id) AS is_favorite FROM cast_profiles p WHERE p.status='approved' AND p.id NOT IN (SELECT id FROM members WHERE blocked=1) ORDER BY is_favorite DESC,p.name,p.id",actor),shifts:await rows("SELECT s.* FROM shifts s JOIN cast_profiles p ON p.id=s.cast_id WHERE s.enabled=1 AND p.status='approved' AND s.cast_id NOT IN (SELECT id FROM members WHERE blocked=1) AND s.starts>? AND NOT EXISTS(SELECT 1 FROM reservations r WHERE r.shift_id=s.id AND r.status IN ('held','confirmed','completed')) ORDER BY s.starts",now+900000),ownShifts:role==='cast'?await rows('SELECT s.*,r.status AS reservation_status FROM shifts s LEFT JOIN reservations r ON r.shift_id=s.id AND r.status IN (\'held\',\'confirmed\',\'completed\') WHERE s.cast_id=? AND s.starts>? ORDER BY s.starts',actor,now-86400000):[],reservations,messages:await rows("SELECT cm.*,m.name AS sender_name FROM conversation_messages cm JOIN reservations r ON r.id=cm.reservation JOIN members m ON m.id=cm.sender WHERE r.customer=? OR r.cast_id=? ORDER BY cm.created,cm.id",actor,actor),applications:admin?await rows('SELECT * FROM cast_profiles ORDER BY status,name'):[],events:admin?await rows('SELECT * FROM audit_events ORDER BY created DESC LIMIT 100'):[],reports:admin?await rows('SELECT p.* FROM reports p JOIN reservations r ON r.id=p.booking ORDER BY p.created DESC'):[],voiceConfigured:guardConfigured(env)&&!!(env.LIVEKIT_URL?.match(/^wss:\/\/[a-z0-9-]+\.livekit\.cloud$/i)&&env.LIVEKIT_API_KEY&&env.LIVEKIT_API_SECRET&&env.LIVEKIT_FREE_PLAN==='build'),paymentMode:'test'});
  }
  const raw=await req.text();requireThat(raw.length<=10000,413,'送信内容が長すぎます');let a:any;try{a=JSON.parse(raw);}catch{throw new Failure(400,'JSON形式が不正です');}requireThat(a&&typeof a==='object',400,'入力が不正です');
 
+ if(a.action==='favorite'){
+  requireThat(text(a.castId,200)&&typeof a.enabled==='boolean'&&a.castId!==actor,400,'キャストの指定を確認してください');
+  if(a.enabled){
+   await q("INSERT OR IGNORE INTO cast_favorites(member_id,cast_id,created) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM cast_profiles p JOIN members m ON m.id=p.id WHERE p.id=? AND p.status='approved' AND m.blocked=0)",actor,a.castId,now,a.castId).run();
+   const favorite=await q('SELECT 1 FROM cast_favorites WHERE member_id=? AND cast_id=?',actor,a.castId).first();
+   requireThat(favorite,404,'このキャストは現在登録できません');
+  }else{
+   await q('DELETE FROM cast_favorites WHERE member_id=? AND cast_id=?',actor,a.castId).run();
+  }
+  return json({ok:true});
+ }
  if(a.action==='guestProfile'){
   requireThat(role==='user',403,'ゲストのみ設定できます');
   const values=['bio','topics','style'].map((key,index)=>{
@@ -118,14 +139,23 @@ export async function handleWorkspace(req:Request,env:Environment,identity:Membe
    requireThat(result.meta.changes===1,404,'投稿が見つかりません');
   }else{
    requireThat(text(a.title,80)&&text(a.body,2000),400,'タイトルは80文字、本文は2000文字以内で入力してください');
+   const existing=a.id?await q('SELECT visibility,photo_id FROM cast_posts WHERE id=? AND cast_id=?',String(a.id),actor).first<{visibility:string;photo_id:string|null}>():null;
+   const visibility=a.visibility??existing?.visibility??'public';
+   const photoId=a.photoId===undefined?existing?.photo_id??null:a.photoId||null;
+   requireThat(['public','fans'].includes(visibility),400,'公開範囲を確認してください');
+   if(photoId){
+    requireThat(text(photoId,100),400,'写真を確認してください');
+    requireThat(await q('SELECT id FROM diary_photos WHERE id=? AND owner=?',photoId,actor).first(),400,'自分がアップロードした写真を選んでください');
+    requireThat(!(await q('SELECT id FROM cast_posts WHERE photo_id=? AND id<>?',photoId,a.id||'').first()),409,'この写真は別の投稿に使用されています。写真を再度選択してください');
+   }
    if(a.id){
     requireThat(text(a.id,100),400,'投稿を指定してください');
-    const result=await q('UPDATE cast_posts SET title=?,body=?,updated=? WHERE id=? AND cast_id=?',a.title.trim(),a.body.trim(),now,a.id,actor).run();
+    const result=await q('UPDATE cast_posts SET title=?,body=?,updated=?,visibility=?,photo_id=? WHERE id=? AND cast_id=?',a.title.trim(),a.body.trim(),now,visibility,photoId,a.id,actor).run();
     requireThat(result.meta.changes===1,404,'投稿が見つかりません');
    }else{
     const result=await q(
-     'INSERT INTO cast_posts(id,cast_id,title,body,created,updated) SELECT ?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM cast_posts WHERE cast_id=? AND created>?)<5',
-     crypto.randomUUID(),actor,a.title.trim(),a.body.trim(),now,now,actor,now-60000,
+     'INSERT INTO cast_posts(id,cast_id,title,body,created,updated,visibility,photo_id) SELECT ?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM cast_posts WHERE cast_id=? AND created>?)<5',
+     crypto.randomUUID(),actor,a.title.trim(),a.body.trim(),now,now,visibility,photoId,actor,now-60000,
     ).run();
     requireThat(result.meta.changes===1,429,'投稿が続いています。少し待ってから投稿してください');
    }

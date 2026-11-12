@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `cast_posts_unique_photo` ON `cast_posts` (`photo_id`);

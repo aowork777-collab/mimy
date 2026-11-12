@@ -78,6 +78,20 @@
       "when": 1794485315781,
       "tag": "0010_guest_profiles_cast_diary",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1794486437527,
+      "tag": "0011_favorites_and_diary_photos",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1794486494640,
+      "tag": "0012_unique_diary_photo",
+      "breakpoints": true
     }
   ]
 }

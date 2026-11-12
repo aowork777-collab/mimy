@@ -27,11 +27,23 @@ export const guestProfiles=sqliteTable('guest_profiles',{
  topics:text('topics').notNull().default(''),
  style:text('style').notNull().default('')
 });
+export const diaryPhotos=sqliteTable('diary_photos',{
+ id:text('id').primaryKey(),
+ owner:text('owner').notNull().references(()=>members.id),
+ created:integer('created').notNull()
+},t=>[index('diary_photos_owner_created').on(t.owner,t.created)]);
+export const castFavorites=sqliteTable('cast_favorites',{
+ memberId:text('member_id').notNull().references(()=>members.id),
+ castId:text('cast_id').notNull().references(()=>members.id),
+ created:integer('created').notNull()
+},t=>[uniqueIndex('cast_favorites_pair').on(t.memberId,t.castId),index('cast_favorites_cast').on(t.castId,t.created)]);
 export const castPosts=sqliteTable('cast_posts',{
  id:text('id').primaryKey(),
  castId:text('cast_id').notNull().references(()=>members.id),
  title:text('title').notNull(),
  body:text('body').notNull(),
  created:integer('created').notNull(),
- updated:integer('updated').notNull()
-},t=>[index('cast_posts_cast_created').on(t.castId,t.created)]);
+ updated:integer('updated').notNull(),
+ visibility:text('visibility').notNull().default('public'),
+ photoId:text('photo_id').references(()=>diaryPhotos.id)
+},t=>[index('cast_posts_cast_created').on(t.castId,t.created),uniqueIndex('cast_posts_unique_photo').on(t.photoId)]);
