@@ -30,7 +30,7 @@ export async function authenticate(req:Request,env:AuthEnv){
 async function memberIdentity(req:Request,env:AuthEnv,user:User){
  if(!env.DB)throw Error('データベースが未接続です');
  const db=env.DB;
- const mapped=await db.prepare('SELECT member_id FROM auth_identities WHERE auth_id=?').bind(user.id).first<{member_id:string}>();
+ const mapped=await db.prepare('SELECT member_id,verified_email FROM auth_identities WHERE auth_id=?').bind(user.id).first<{member_id:string;verified_email:string|null}>();
  // Only the platform's trusted identity AND the verified email can authorize legacy data migration.
  const oldId=req.headers.get('oai-authenticated-user-id');
  const oldEmail=req.headers.get('oai-authenticated-user-email')?.trim().toLowerCase();
@@ -43,11 +43,11 @@ async function memberIdentity(req:Request,env:AuthEnv,user:User){
   // A failed first visit can leave a mapping without a member or any member data.
   if(member!==mapped.member_id&&mapped.member_id==='email:'+user.id){
    await db.prepare('UPDATE OR IGNORE auth_identities SET member_id=? WHERE auth_id=? AND member_id=? AND NOT EXISTS (SELECT 1 FROM members WHERE id=?)').bind(member,user.id,mapped.member_id,mapped.member_id).run();
-  }else return mapped.member_id;
- }else await db.prepare('INSERT OR IGNORE INTO auth_identities(auth_id,member_id,created) VALUES(?,?,?)').bind(user.id,member,Date.now()).run();
- const result=await db.prepare('SELECT member_id FROM auth_identities WHERE auth_id=?').bind(user.id).first<{member_id:string}>();
+  }else return mapped;
+ }else await db.prepare('INSERT OR IGNORE INTO auth_identities(auth_id,member_id,created,verified_email) VALUES(?,?,?,?)').bind(user.id,member,Date.now(),user.email!).run();
+ const result=await db.prepare('SELECT member_id,verified_email FROM auth_identities WHERE auth_id=?').bind(user.id).first<{member_id:string;verified_email:string|null}>();
  if(!result)throw Error('この既存アカウントは別のログインに連携済みです。運営へお問い合わせください。');
- return result.member_id;
+ return result;
 }
 export async function withEmailIdentity(req:Request,env:AuthEnv,handler:(identity:MemberIdentity|null)=>Promise<Response>,publicRead=false){
  let stage='session';
@@ -56,7 +56,13 @@ export async function withEmailIdentity(req:Request,env:AuthEnv,handler:(identit
   stage='member';
   let member:MemberIdentity|null=null;
   if(identity){
-   member={id:await memberIdentity(req,env,identity.user),email:identity.user.email!};
+   const {member_id:id,verified_email}=await memberIdentity(req,env,identity.user);
+   const email=identity.user.email!;
+   // Record only a confirmed email from Supabase for the matching member.
+   if(verified_email!==email)await env.DB!.prepare(
+    'UPDATE auth_identities SET verified_email=? WHERE auth_id=? AND member_id=? AND verified_email IS NOT ?',
+   ).bind(email,identity.user.id,id,email).run();
+   member={id,email};
   }else if(env.LEGACY_SITES_MIGRATION==='enabled'&&env.DB&&!cookies(req)[accessName]){
    const id=req.headers.get('oai-authenticated-user-id');
    const email=req.headers.get('oai-authenticated-user-email');

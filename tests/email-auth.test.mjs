@@ -38,6 +38,10 @@ test('trusted platform headers alone are not a login; verified email owns stable
  assert.equal((await withEmailIdentity(request(fake),s.env,handler)).status,401);
  const r=await withEmailIdentity(request({...fake,cookie:s.cookie}),s.env,handler);
  assert.deepEqual(await r.json(),{id:'email:user-123',email:'member@example.test'});
+ assert.equal(s.sql.prepare('SELECT verified_email FROM auth_identities WHERE auth_id=?').get(s.user.id).verified_email,s.user.email);
+ s.user.email='updated@example.test';
+ await withEmailIdentity(request({cookie:s.cookie}),s.env,handler);
+ assert.equal(s.sql.prepare('SELECT verified_email FROM auth_identities WHERE auth_id=?').get(s.user.id).verified_email,s.user.email);
  const publicResult=await withEmailIdentity(request(fake),s.env,handler,true);assert.equal((await publicResult.json()).id,null);
 });
 test('legacy migration requires opt-in and matching verified email; keeps blocked member intact',async()=>{

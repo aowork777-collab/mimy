@@ -139,3 +139,18 @@ button,a,input,select,textarea{-webkit-tap-highlight-color:transparent}
  .support-links{gap:8px 20px;font-size:13px}footer{padding-bottom:calc(28px + env(safe-area-inset-bottom));margin-top:48px}
  #partners,#cast-reservation,#profile-booking,#reservation-details{scroll-margin-top:160px}
 }
+
+.member-details{margin-top:18px;padding:20px;border:1px solid var(--line);border-radius:16px;background:#fcf7f9}
+.member-email{display:grid;gap:4px;overflow-wrap:anywhere}
+.member-history-tabs,.member-pagination{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:16px}
+.member-history-tabs button[aria-pressed=true]{background:#a83f69;color:white;border-color:#a83f69}
+.member-history-list{display:grid;gap:12px;margin:16px 0 0;padding:0;list-style:none}
+.member-history-row{padding:16px;background:white;border:1px solid var(--line);border-radius:12px}
+.member-history-title{display:flex;align-items:center;flex-wrap:wrap;gap:8px;justify-content:space-between;margin-bottom:12px}
+.member-history-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:10px;margin:0}
+.member-history-fields dt{font-size:12px;color:var(--muted)}
+.member-history-fields dd{margin:0;font-size:14px;overflow-wrap:anywhere}
+@media(max-width:600px){
+ .member-details{padding:14px}.member-history-tabs button{flex:1}
+ .member-history-row{padding:14px}
+}

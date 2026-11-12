@@ -272,3 +272,56 @@ test('pricing tiers: administrator-only changes, four prices and frozen reservat
   assert.equal((await req('alice',{action:'pay',id:result.body.id})).status,200);
  }
 });
+
+test('member details are admin-only and keep past purchases after cancellation',async()=>{
+ const {req,env,sql}=setup();
+ await req('alice');
+ await req('cast',{action:'apply',name:'葵',bio:'紹介'});
+ await req('owner',{action:'review',target:'cast',decision:'approve'});
+ await req('bob');
+ sql.prepare('INSERT INTO auth_identities(auth_id,member_id,created,verified_email) VALUES(?,?,?,?)')
+  .run('alice-auth','alice',Date.now(),'registered@example.test');
+
+ const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;
+ for(let i=0;i<4;i++)await req('cast',{action:'shiftAdd',starts:start+i*3600000});
+ const {body:{shifts}}=await req('alice');
+ const reserve=async(who,shift)=> (await req(who,{
+  action:'reserve',shiftId:shift.id,minutes:30,course:'雑談',agree:true,
+ })).body.id;
+ const purchased=await reserve('alice',shifts[0]);
+ assert.equal((await req('alice',{action:'pay',id:purchased})).status,200);
+ assert.equal((await req('alice',{action:'cancel',id:purchased})).status,200);
+ const historical=await reserve('alice',shifts[1]);
+ const historicalDate=Date.now()-60_000;
+ sql.prepare("UPDATE reservations SET status='cancelled' WHERE id=?").run(historical);
+ sql.prepare('INSERT INTO audit_events VALUES(?,?,?,?,?)')
+  .run('past-payment','alice',historical,'テスト決済で確定（実請求なし）',historicalDate);
+ const held=await reserve('alice',shifts[2]);
+ const unrelated=await reserve('bob',shifts[3]);
+
+ async function details(who,target,kind='reservations',page=0){
+  const params=new URLSearchParams({memberId:target,history:kind,historyPage:String(page)});
+  const response=await handleWorkspace(new Request('https://test.local/api/workspace?'+params),env,
+   who?{id:who,email:who+'@example.test'}:null);
+  return {status:response.status,headers:response.headers,body:await response.json()};
+ }
+ for(const who of ['alice','cast','bob'])assert.equal((await details(who,'alice')).status,403);
+ assert.equal((await details(null,'alice')).status,401);
+ assert.equal((await details('owner','missing')).status,404);
+ assert.equal((await details('owner','alice','purchases',-1)).status,400);
+ const result=await details('owner','alice');
+ assert.equal(result.status,200);
+ assert.equal(result.headers.get('cache-control'),'no-store');
+ assert.equal(result.body.member.email,'registered@example.test');
+ assert.equal((await details('owner','bob')).body.member.email,null);
+ assert.deepEqual(new Set(result.body.entries.map(r=>r.id)),new Set([purchased,historical,held]));
+ assert.equal(result.body.entries.find(r=>r.id===held).status,'held');
+ assert.equal(result.body.entries.some(r=>r.id===unrelated),false);
+ assert.ok((await details('owner','cast')).body.entries.every(r=>r.participation==='cast'));
+ const purchases=(await details('owner','alice','purchases')).body.entries;
+ assert.deepEqual(purchases.map(r=>r.id),[purchased,historical]);
+ assert.ok(purchases.every(r=>r.status==='cancelled'&&r.price===1990&&r.paid_at>0));
+ assert.equal(purchases[1].paid_at,historicalDate);
+ assert.deepEqual((await details('owner','cast','purchases')).body.entries,[]);
+ assert.doesNotMatch(JSON.stringify((await req('owner')).body),/registered@example\.test/);
+});

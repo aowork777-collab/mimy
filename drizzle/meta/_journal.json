@@ -64,6 +64,13 @@
       "when": 1794409938182,
       "tag": "0008_outgoing_angel",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1794475219353,
+      "tag": "0009_admin_member_history",
+      "breakpoints": true
     }
   ]
 }
