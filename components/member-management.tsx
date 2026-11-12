@@ -112,6 +112,7 @@ export function MemberManagement(){
  const [items,setItems]=useState<Member[]>([]);
  const [page,setPage]=useState(0);
  const [search,setSearch]=useState('');
+ const [memberRole,setMemberRole]=useState('user');
  const [total,setTotal]=useState(0);
  const [busy,setBusy]=useState(false);
  const [message,setMessage]=useState('');
@@ -120,7 +121,7 @@ export function MemberManagement(){
 
  useEffect(()=>{
   const controller=new AbortController();
-  const params=new URLSearchParams({membersPage:String(page),memberSearch:search});
+  const params=new URLSearchParams({membersPage:String(page),memberSearch:search,memberRole});
   async function load(){
    try{
     const response=await fetch('/api/workspace?'+params,{signal:controller.signal});
@@ -136,7 +137,7 @@ export function MemberManagement(){
   }
   void load();
   return()=>controller.abort();
- },[page,search,listVersion]);
+ },[page,search,memberRole,listVersion]);
 
  async function toggle(member:Member){
   const reason=member.blocked?'':prompt('利用停止の理由を入力してください（200文字以内）');
@@ -165,6 +166,9 @@ export function MemberManagement(){
  return <section className="panel">
   <h2>登録アカウントの管理</h2>
   <p>利用停止中は予約・メッセージ・通話などを利用できません。履歴は削除せず保管します。</p>
+  <div className="member-history-tabs" role="group" aria-label="アカウントの役割">
+   {[['user','ゲスト'],['cast','キャスト'],['admin','管理者']].map(([value,label])=><button key={value} className="secondary" aria-pressed={memberRole===value} onClick={()=>{setMemberRole(value);setPage(0);setItems([]);setExpanded(null);}}>{label}</button>)}
+  </div>
   <label>表示名・アカウントIDで検索
    <input disabled={busy} value={search} maxLength={100} onChange={e=>{
     setSearch(e.target.value);
@@ -177,7 +181,7 @@ export function MemberManagement(){
    const isOpen=expanded===member.id;
    const detailId='member-details-'+member.id;
    return <div className="application" key={member.id}>
-    <h3>{member.name} <span className="status">{member.blocked?'利用停止':member.admin_protected?'管理者':member.role==='cast'?'キャスト':'利用者'}</span></h3>
+    <h3>{member.name} <span className="status">{member.blocked?'利用停止':member.admin_protected?'管理者':member.role==='cast'?'キャスト':'ゲスト'}</span></h3>
     <small>{member.id}</small>
     {member.blocked&&<p>理由：{member.block_reason}</p>}
     <div className="actions">

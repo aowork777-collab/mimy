@@ -76,17 +76,62 @@ export async function handleWorkspace(req:Request,env:Environment,identity:Membe
   requireThat(admin,403,'管理者のみアカウントの詳細を確認できます');
   return await memberHistory(db,params,now);
  }
+ if(req.method==='GET'&&params.has('diaryCast')){
+  const castId=params.get('diaryCast')||'';
+  const page=Number(params.get('page')||0);
+  requireThat(Number.isSafeInteger(page)&&page>=0&&page<=100000,400,'ページが不正です');
+  const visible=await q("SELECT p.id FROM cast_profiles p JOIN members m ON m.id=p.id WHERE p.id=? AND p.status='approved' AND m.blocked=0",castId).first();
+  requireThat(visible,404,'キャストが見つかりません');
+  const posts=await rows('SELECT id,title,body,created,updated FROM cast_posts WHERE cast_id=? ORDER BY created DESC,id DESC LIMIT 11 OFFSET ?',castId,page*10);
+  return json({posts:posts.slice(0,10),hasNext:posts.length>10});
+ }
  const audit=(target:string,action:string)=>q('INSERT INTO audit_events VALUES(?,?,?,?,?)',crypto.randomUUID(),actor,target,action,now);
  // Expiry is checked on every request; the partial unique index releases the slot atomically.
  await q("UPDATE reservations SET status='expired' WHERE status='held' AND expires<=?",now).run();
  const profile=await q('SELECT * FROM cast_profiles WHERE id=?',actor).first();
  if(req.method==='GET'){
  const memberPage=Math.max(0,Math.min(100000,Number(params.get('membersPage'))||0)),search='%'+(params.get('memberSearch')||'').slice(0,100)+'%';
+ const memberRole=params.get('memberRole')||'all';
+ requireThat(['all','user','cast','admin'].includes(memberRole),400,'役割の指定が不正です');
+ const roleFilter=memberRole==='all'?'1=1':memberRole==='admin'?'admin_protected=1':"admin_protected=0 AND role='"+memberRole+"'";
+ const memberFilter="(name LIKE ? OR id LIKE ?) AND ("+roleFilter+")";
  const reservations=await rows(`SELECT r.*,s.starts,p.name AS cast_name,m.name AS customer_name FROM reservations r JOIN shifts s ON s.id=r.shift_id JOIN cast_profiles p ON p.id=r.cast_id JOIN members m ON m.id=r.customer WHERE ${admin?'1=1':'(r.customer=? OR r.cast_id=?)'} ORDER BY s.starts DESC`,...(admin?[]:[actor,actor]));
- return json({members:admin?await rows('SELECT id,name,role,blocked,block_reason,admin_protected,created FROM members WHERE name LIKE ? OR id LIKE ? ORDER BY created DESC,id LIMIT 50 OFFSET ?',search,search,Math.floor(memberPage)*50):[],memberTotal:admin?(await q('SELECT COUNT(*) n FROM members WHERE name LIKE ? OR id LIKE ?',search,search).first<{n:number}>())!.n:0,adminInvites:admin?await rows('SELECT id,email,created,expires,accepted_by,accepted_at,revoked FROM admin_invites ORDER BY created DESC LIMIT 100'):[],me:{id:actor,name:me!.name,role},profile,casts:await rows("SELECT id,name,bio,headline,photo_url,topics,hobbies,style,pricing_tier FROM cast_profiles WHERE status='approved' AND id NOT IN (SELECT id FROM members WHERE blocked=1)"),shifts:await rows("SELECT s.* FROM shifts s JOIN cast_profiles p ON p.id=s.cast_id WHERE s.enabled=1 AND p.status='approved' AND s.cast_id NOT IN (SELECT id FROM members WHERE blocked=1) AND s.starts>? AND NOT EXISTS(SELECT 1 FROM reservations r WHERE r.shift_id=s.id AND r.status IN ('held','confirmed','completed')) ORDER BY s.starts",now+900000),ownShifts:role==='cast'?await rows('SELECT s.*,r.status AS reservation_status FROM shifts s LEFT JOIN reservations r ON r.shift_id=s.id AND r.status IN (\'held\',\'confirmed\',\'completed\') WHERE s.cast_id=? AND s.starts>? ORDER BY s.starts',actor,now-86400000):[],reservations,messages:await rows("SELECT cm.*,m.name AS sender_name FROM conversation_messages cm JOIN reservations r ON r.id=cm.reservation JOIN members m ON m.id=cm.sender WHERE r.customer=? OR r.cast_id=? ORDER BY cm.created,cm.id",actor,actor),applications:admin?await rows('SELECT * FROM cast_profiles ORDER BY status,name'):[],events:admin?await rows('SELECT * FROM audit_events ORDER BY created DESC LIMIT 100'):[],reports:admin?await rows('SELECT p.* FROM reports p JOIN reservations r ON r.id=p.booking ORDER BY p.created DESC'):[],voiceConfigured:guardConfigured(env)&&!!(env.LIVEKIT_URL?.match(/^wss:\/\/[a-z0-9-]+\.livekit\.cloud$/i)&&env.LIVEKIT_API_KEY&&env.LIVEKIT_API_SECRET&&env.LIVEKIT_FREE_PLAN==='build'),paymentMode:'test'});
+ return json({guestProfile:await q('SELECT bio,topics,style FROM guest_profiles WHERE id=?',actor).first(),members:admin?await rows('SELECT id,name,role,blocked,block_reason,admin_protected,created FROM members WHERE '+memberFilter+' ORDER BY created DESC,id LIMIT 50 OFFSET ?',search,search,Math.floor(memberPage)*50):[],memberTotal:admin?(await q('SELECT COUNT(*) n FROM members WHERE '+memberFilter,search,search).first<{n:number}>())!.n:0,adminInvites:admin?await rows('SELECT id,email,created,expires,accepted_by,accepted_at,revoked FROM admin_invites ORDER BY created DESC LIMIT 100'):[],me:{id:actor,name:me!.name,role},profile,casts:await rows("SELECT id,name,bio,headline,photo_url,topics,hobbies,style,pricing_tier FROM cast_profiles WHERE status='approved' AND id NOT IN (SELECT id FROM members WHERE blocked=1)"),shifts:await rows("SELECT s.* FROM shifts s JOIN cast_profiles p ON p.id=s.cast_id WHERE s.enabled=1 AND p.status='approved' AND s.cast_id NOT IN (SELECT id FROM members WHERE blocked=1) AND s.starts>? AND NOT EXISTS(SELECT 1 FROM reservations r WHERE r.shift_id=s.id AND r.status IN ('held','confirmed','completed')) ORDER BY s.starts",now+900000),ownShifts:role==='cast'?await rows('SELECT s.*,r.status AS reservation_status FROM shifts s LEFT JOIN reservations r ON r.shift_id=s.id AND r.status IN (\'held\',\'confirmed\',\'completed\') WHERE s.cast_id=? AND s.starts>? ORDER BY s.starts',actor,now-86400000):[],reservations,messages:await rows("SELECT cm.*,m.name AS sender_name FROM conversation_messages cm JOIN reservations r ON r.id=cm.reservation JOIN members m ON m.id=cm.sender WHERE r.customer=? OR r.cast_id=? ORDER BY cm.created,cm.id",actor,actor),applications:admin?await rows('SELECT * FROM cast_profiles ORDER BY status,name'):[],events:admin?await rows('SELECT * FROM audit_events ORDER BY created DESC LIMIT 100'):[],reports:admin?await rows('SELECT p.* FROM reports p JOIN reservations r ON r.id=p.booking ORDER BY p.created DESC'):[],voiceConfigured:guardConfigured(env)&&!!(env.LIVEKIT_URL?.match(/^wss:\/\/[a-z0-9-]+\.livekit\.cloud$/i)&&env.LIVEKIT_API_KEY&&env.LIVEKIT_API_SECRET&&env.LIVEKIT_FREE_PLAN==='build'),paymentMode:'test'});
  }
  const raw=await req.text();requireThat(raw.length<=10000,413,'送信内容が長すぎます');let a:any;try{a=JSON.parse(raw);}catch{throw new Failure(400,'JSON形式が不正です');}requireThat(a&&typeof a==='object',400,'入力が不正です');
 
+ if(a.action==='guestProfile'){
+  requireThat(role==='user',403,'ゲストのみ設定できます');
+  const values=['bio','topics','style'].map((key,index)=>{
+   const value=a[key]??'';
+   requireThat(typeof value==='string'&&value.trim().length<=[500,100,100][index],400,'プロフィールの文字数を確認してください');
+   return value.trim();
+  });
+  await q('INSERT INTO guest_profiles(id,bio,topics,style) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET bio=excluded.bio,topics=excluded.topics,style=excluded.style',actor,...values).run();
+  return json({ok:true});
+ }
+ if(a.action==='diarySave'||a.action==='diaryDelete'){
+  requireThat(role==='cast'&&profile?.status==='approved',403,'承認済みキャストのみ投稿できます');
+  if(a.action==='diaryDelete'){
+   requireThat(text(a.id,100),400,'投稿を指定してください');
+   const result=await q('DELETE FROM cast_posts WHERE id=? AND cast_id=?',a.id,actor).run();
+   requireThat(result.meta.changes===1,404,'投稿が見つかりません');
+  }else{
+   requireThat(text(a.title,80)&&text(a.body,2000),400,'タイトルは80文字、本文は2000文字以内で入力してください');
+   if(a.id){
+    requireThat(text(a.id,100),400,'投稿を指定してください');
+    const result=await q('UPDATE cast_posts SET title=?,body=?,updated=? WHERE id=? AND cast_id=?',a.title.trim(),a.body.trim(),now,a.id,actor).run();
+    requireThat(result.meta.changes===1,404,'投稿が見つかりません');
+   }else{
+    const result=await q(
+     'INSERT INTO cast_posts(id,cast_id,title,body,created,updated) SELECT ?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM cast_posts WHERE cast_id=? AND created>?)<5',
+     crypto.randomUUID(),actor,a.title.trim(),a.body.trim(),now,now,actor,now-60000,
+    ).run();
+    requireThat(result.meta.changes===1,429,'投稿が続いています。少し待ってから投稿してください');
+   }
+  }
+  return json({ok:true});
+ }
  if(a.action==='memberBlock'){
  requireThat(admin,403,'管理者のみ操作できます');requireThat(typeof a.target==='string'&&typeof a.blocked==='boolean'&&typeof a.reason==='string'&&a.reason.trim().length<=200,400,'対象と理由を確認してください');
  requireThat(a.target!==actor,400,'自分自身は停止できません');

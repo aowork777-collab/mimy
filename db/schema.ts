@@ -20,3 +20,18 @@ export const adminInvites=sqliteTable('admin_invites',{id:text('id').primaryKey(
 // Verified Supabase identities map to stable member IDs; no passwords are stored in D1.
 export const authIdentities=sqliteTable('auth_identities',{authId:text('auth_id').primaryKey(),memberId:text('member_id').notNull().unique(),created:integer('created').notNull(),verifiedEmail:text('verified_email')});
 export const authRateLimits=sqliteTable('auth_rate_limits',{key:text('key').primaryKey(),bucket:integer('bucket').notNull(),count:integer('count').notNull()});
+
+export const guestProfiles=sqliteTable('guest_profiles',{
+ id:text('id').primaryKey().references(()=>members.id),
+ bio:text('bio').notNull().default(''),
+ topics:text('topics').notNull().default(''),
+ style:text('style').notNull().default('')
+});
+export const castPosts=sqliteTable('cast_posts',{
+ id:text('id').primaryKey(),
+ castId:text('cast_id').notNull().references(()=>members.id),
+ title:text('title').notNull(),
+ body:text('body').notNull(),
+ created:integer('created').notNull(),
+ updated:integer('updated').notNull()
+},t=>[index('cast_posts_cast_created').on(t.castId,t.created)]);

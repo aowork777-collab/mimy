@@ -325,3 +325,41 @@ test('member details are admin-only and keep past purchases after cancellation',
  assert.deepEqual((await details('owner','cast','purchases')).body.entries,[]);
  assert.doesNotMatch(JSON.stringify((await req('owner')).body),/registered@example\.test/);
 });
+
+test('optional guest profiles stay private, role groups filter, and diary ownership is enforced',async()=>{
+ const {req,env}=setup();
+ await req('alice');await req('bob');
+ await req('cast',{action:'apply',name:'葵',bio:'紹介'});
+ await req('owner',{action:'review',target:'cast',decision:'approve'});
+ const get=async(who,params)=>{
+  const response=await handleWorkspace(new Request('https://test.local/api/workspace?'+new URLSearchParams(params)),env,{id:who,email:who+'@example.test'});
+  return {status:response.status,body:await response.json()};
+ };
+ assert.equal((await req('alice',{action:'guestProfile'})).status,200);
+ assert.equal((await req('alice',{action:'guestProfile',bio:'自己紹介',topics:'映画',style:'静かに'})).status,200);
+ assert.equal((await req('alice')).body.guestProfile.bio,'自己紹介');
+ assert.equal((await req('bob')).body.guestProfile,null);
+ assert.equal((await req('cast',{action:'guestProfile',bio:'x'})).status,403);
+ assert.equal((await req('alice',{action:'guestProfile',bio:'x'.repeat(501)})).status,400);
+ for(const role of ['user','cast','admin']){
+  const data=(await get('owner',{memberRole:role})).body;
+  assert.ok(data.members.length>0);
+  assert.ok(data.members.every(m=>role==='admin'?m.admin_protected:!m.admin_protected&&m.role===role));
+  assert.equal(data.memberTotal,data.members.length);
+ }
+ assert.equal((await req('alice',{action:'diarySave',title:'test',body:'test'})).status,403);
+ assert.equal((await req('cast',{action:'diarySave',title:'日記',body:'本文'})).status,200);
+ let post=(await get('alice',{diaryCast:'cast'})).body.posts[0];
+ assert.equal(post.title,'日記');
+ await req('othercast',{action:'apply',name:'別キャスト',bio:'紹介'});
+ await req('owner',{action:'review',target:'othercast',decision:'approve'});
+ assert.equal((await req('othercast',{action:'diarySave',id:post.id,title:'改変',body:'改変'})).status,404);
+ assert.equal((await req('othercast',{action:'diaryDelete',id:post.id})).status,404);
+ assert.equal((await req('cast',{action:'diarySave',id:post.id,title:'更新',body:'更新本文'})).status,200);
+ assert.equal((await get('alice',{diaryCast:'cast'})).body.posts[0].title,'更新');
+ await req('owner',{action:'review',target:'cast',decision:'suspend'});
+ assert.equal((await get('alice',{diaryCast:'cast'})).status,404);
+ await req('owner',{action:'review',target:'cast',decision:'approve'});
+ assert.equal((await req('cast',{action:'diaryDelete',id:post.id})).status,200);
+ assert.deepEqual((await get('alice',{diaryCast:'cast'})).body.posts,[]);
+});
