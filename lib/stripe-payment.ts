@@ -100,7 +100,7 @@ export async function startStripeCheckout(env:StripeEnv,booking:StripeBooking,or
   success.searchParams.set('checkout','returned');
   const form=new URLSearchParams({
    mode:'payment',
-   'payment_method_types[0]':'card',
+   'allowed_payment_method_types[0]':'card',
    'line_items[0][price_data][currency]':'jpy',
    'line_items[0][price_data][product_data][name]':`mimy. 会話予約 ${booking.minutes}分`,
    'line_items[0][price_data][unit_amount]':String(booking.price),

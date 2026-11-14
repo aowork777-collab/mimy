@@ -452,13 +452,17 @@ test('Stripe sandbox confirms only signed matching payments and releases expired
  globalThis.fetch=async(url,options)=>{
   assert.equal(new URL(url).origin,'https://api.stripe.com');
   assert.equal(options.redirect,'manual','Workers-compatible requests must not follow redirects with credentials');
+  if(options.body?.get('mode')==='payment'){
+   assert.equal(options.body.has('payment_method_types[0]'),false,'Deprecated static payment method parameter must not be sent');
+   assert.equal(options.body.get('allowed_payment_method_types[0]'),'card');
+  }
   assert.equal(options.headers.get('Authorization'),'Bearer sk_test_fixture');
   if(options.body?.has('client_reference_id')){
    const form=options.body;
    const bid=form.get('client_reference_id');
    const key=options.headers.get('Idempotency-Key');
    assert.equal(key,'mimy-checkout-'+bid);
-   assert.equal(form.get('payment_method_types[0]'),'card');
+   assert.equal(form.get('allowed_payment_method_types[0]'),'card');
    assert.equal(form.get('line_items[0][price_data][unit_amount]'),'1990');
    const id='cs_test_'+bid.replaceAll('-','');
    if(!sessions.has(id)){

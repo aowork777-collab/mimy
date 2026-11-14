@@ -11,6 +11,7 @@ Stripe Checkoutでカードのテスト決済を行い、通知を受けて予�
    - `checkout.session.expired`
 4. 送信先の種類を Webhook にして、URLに `https://mimy.example-jp.com/api/stripe/webhook` を入力します。
 5. 作成した送信先で署名シークレットを確認します。
+6. 同じサンドボックスの「設定 → 決済手段」でカードを有効にします。Checkoutは `allowed_payment_method_types[0]=card` で対象をカードに絞ります。廃止された `payment_method_types` は送信しません。
 
 ## mimy.の設定
 
@@ -36,6 +37,10 @@ Stripe Checkoutでカードのテスト決済を行い、通知を受けて予�
 仮押さえは10分です。Stripeの支払い画面を作ると、その時点から期限を約35分に延長します。Stripeで発行済みの支払い画面が残っている間は予約枠を確保します。決済前のキャンセルではStripeの失効を確認します。失効通知が届かない場合は、Workbenchから再送するか、支払い状況を確認して予約画面から取り消します。
 
 本番の支払い受付には、別途、本番用の実装と運用確認が必要です。テスト実装は本番APIキーを受け付けません。
+
+## リクエスト修正後も同じエラーが出る場合
+
+Stripeのログに「以前のリクエストの再実行」とある場合、予約IDに紐づくべき等キーで前回の応答が再利用されています。パラメーターの修正後は、失敗した仮予約を取り消して新しく予約し、すぐに決済画面を開いて確認します。二重作成を防ぐため、同じ予約の再試行でキーをランダムに変更しないでください。
 
 - [Stripe Webhookの作成](https://docs.stripe.com/workbench/event-destinations)
 - [テストカード](https://docs.stripe.com/testing)
