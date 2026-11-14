@@ -1,0 +1,41 @@
+# Stripeサンドボックスの設定
+
+Stripe Checkoutでカードのテスト決済を行い、通知を受けて予約を確定します。サンドボックス用のキーで動作します。
+
+## Stripeの設定
+
+1. ダッシュボードで mimy. のサンドボックスを開きます。
+2. [APIキー](https://dashboard.stripe.com/apikeys) でサンドボックスのシークレットキーを確認します。
+3. [Workbench の Webhook](https://dashboard.stripe.com/webhooks) で送信先を追加します。「自分のアカウント」を選び、次の2イベントを選びます。
+   - `checkout.session.completed`
+   - `checkout.session.expired`
+4. 送信先の種類を Webhook にして、URLに `https://mimy.example-jp.com/api/stripe/webhook` を入力します。
+5. 作成した送信先で署名シークレットを確認します。
+
+## mimy.の設定
+
+公開サイトの **サイト設定 → 環境変数** に追加し、保存後にデプロイします。開発機で試す場合はGit管理外の `.dev.vars` に入れます。
+
+| 名前 | 値 | 秘密にする |
+| --- | --- | --- |
+| `STRIPE_SECRET_KEY` | 同じサンドボックスの `sk_test_` で始まるキー | はい |
+| `STRIPE_WEBHOOK_SECRET` | 作成したWebhookの `whsec_` で始まる値 | はい |
+| `STRIPE_TEST_ENABLED` | `1` | 任意 |
+
+キーの値はソース、GitHub、チャットに貼らず、秘密設定に直接入力します。有効化すると、新しい予約はStripeサンドボックスで支払います。作成済みのデモ予約は従来の決済方法を保持します。
+
+## 確認手順
+
+1. 利用者でログインし、開始まで45分より長く空いている枠を予約します。
+2. 「Stripeでテスト決済へ進む」を押します。予約金額が一致していることを確認します。
+3. Stripeのテストカード `4242 4242 4242 4242`、未来の有効期限、任意の3桁のCVCで支払います。
+4. サイトに戻り、「予約確定」が表示されることと、管理画面の購入履歴に「Stripeテスト」が表示されることを確認します。
+5. Workbenchで決済完了通知が成功したことを確認します。失敗時は設定を修正してから同じ通知を再送できます。
+6. 別の仮予約で支払いを中止し、予約を取り消した後にStripe側の支払い画面が失効することを確認します。
+
+仮押さえは10分です。Stripeの支払い画面を作ると、その時点から期限を約35分に延長します。Stripeで発行済みの支払い画面が残っている間は予約枠を確保します。決済前のキャンセルではStripeの失効を確認します。失効通知が届かない場合は、Workbenchから再送するか、支払い状況を確認して予約画面から取り消します。
+
+本番の支払い受付には、別途、本番用の実装と運用確認が必要です。テスト実装は本番APIキーを受け付けません。
+
+- [Stripe Webhookの作成](https://docs.stripe.com/workbench/event-destinations)
+- [テストカード](https://docs.stripe.com/testing)

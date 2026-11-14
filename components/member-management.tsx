@@ -16,6 +16,7 @@ type HistoryEntry={
  starts?:number;
  created?:number;
  paid_at?:number|null;
+ payment_provider?:string;
 };
 type HistoryResponse={
  member:{id:string;name:string;email:string|null};
@@ -90,7 +91,7 @@ function MemberHistory({memberId,id}:{memberId:string;id:string}){
        <span className={'status '+entry.status}>{statusNames[entry.status]??entry.status}</span>
       </div>
       <dl className="member-history-fields">
-       {purchase?<div><dt>テスト決済日時</dt><dd>{entry.paid_at==null?'記録なし':dateFormat.format(entry.paid_at)}</dd></div>:
+       {purchase?<><div><dt>テスト決済日時</dt><dd>{entry.paid_at==null?'記録なし':dateFormat.format(entry.paid_at)}</dd></div><div><dt>決済方法</dt><dd>{entry.payment_provider==='stripe_test'?'Stripeテスト':'デモ決済'}</dd></div></>:
         <><div><dt>予約日時</dt><dd>{dateFormat.format(entry.starts)}</dd></div>
         <div><dt>予約受付日時</dt><dd>{dateFormat.format(entry.created)}</dd></div></>}
        <div><dt>コース</dt><dd>{entry.course}・{entry.minutes}分</dd></div>

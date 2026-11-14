@@ -8,7 +8,9 @@ const url=s=>'data:text/javascript;base64,'+Buffer.from(compile(s)).toString('ba
 const catalog=url(fs.readFileSync('lib/catalog.ts','utf8'));
 globalThis.__guardJobs=[];globalThis.__guardFail=false;
 const guardMock=url(`export const guardConfigured=e=>!!e.CALL_GUARD_URL;export async function guardRequest(e,a,j){if(globalThis.__guardFail)throw Error('offline');globalThis.__guardJobs.push({action:a,...j});}`);
-const {handleWorkspace}=await import(url(fs.readFileSync('lib/workspace-service.ts','utf8').replace("'./catalog'",JSON.stringify(catalog)).replace("'./call-guard-client'",JSON.stringify(guardMock))));
+const stripeModule=url(fs.readFileSync('lib/stripe-payment.ts','utf8'));
+const {handleStripeWebhook}=await import(stripeModule);
+const {handleWorkspace}=await import(url(fs.readFileSync('lib/workspace-service.ts','utf8').replace("'./stripe-payment'",JSON.stringify(stripeModule)).replace("'./catalog'",JSON.stringify(catalog)).replace("'./call-guard-client'",JSON.stringify(guardMock))));
 function setup(){
  const sql=new DatabaseSync(':memory:');sql.exec('PRAGMA foreign_keys=ON');
  for(const f of fs.readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())sql.exec(fs.readFileSync('drizzle/'+f,'utf8'));
@@ -432,4 +434,95 @@ test('favorites personalize ordering, reveal only fan names, and gate diary text
  assert.equal((await read('cast',{fans:'1'})).body.count,0);
  await req('cast',{action:'diaryDelete',id:post.id});
  assert.equal((await image('alice',photoId)).status,404);
+});
+
+test('Stripe sandbox confirms only signed matching payments and releases expired sessions safely',async()=>{
+ const {req,sql,env}=setup();
+ Object.assign(env,{STRIPE_TEST_ENABLED:'1',STRIPE_SECRET_KEY:'sk_test_fixture',STRIPE_WEBHOOK_SECRET:'whsec_fixture'});
+ await req('alice');await req('bob');
+ await req('cast',{action:'apply',name:'葵',bio:'紹介'});
+ await req('owner',{action:'review',target:'cast',decision:'approve'});
+ const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;
+ for(let i=0;i<3;i++)await req('cast',{action:'shiftAdd',starts:start+i*3600000});
+ const shifts=(await req('alice')).body.shifts;
+ const reserve=shift=>req('alice',{action:'reserve',shiftId:shift.id,minutes:30,course:'雑談',agree:true});
+ const sessions=new Map();
+ const created=[];
+ const originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url,options)=>{
+  assert.equal(new URL(url).origin,'https://api.stripe.com');
+  assert.equal(options.headers.get('Authorization'),'Bearer sk_test_fixture');
+  if(options.body?.has('client_reference_id')){
+   const form=options.body;
+   const bid=form.get('client_reference_id');
+   const key=options.headers.get('Idempotency-Key');
+   assert.equal(key,'mimy-checkout-'+bid);
+   assert.equal(form.get('payment_method_types[0]'),'card');
+   assert.equal(form.get('line_items[0][price_data][unit_amount]'),'1990');
+   const id='cs_test_'+bid.replaceAll('-','');
+   if(!sessions.has(id)){
+    created.push(id);
+    sessions.set(id,{id,livemode:false,mode:'payment',status:'open',payment_status:'unpaid',expires_at:Number(form.get('expires_at')),client_reference_id:bid,amount_total:1990,currency:'jpy',payment_intent:null,url:'https://checkout.stripe.com/c/pay/'+id});
+   }
+   return Response.json(sessions.get(id));
+  }
+  const match=new URL(url).pathname.match(/sessions\/([^/]+)(\/expire)?$/);
+  const session=sessions.get(match[1]);
+  if(match[2])session.status='expired';
+  return Response.json(session);
+ };
+ const signed=async(event,{bad=false,timestamp=Math.floor(Date.now()/1000)}={})=>{
+  const body=JSON.stringify(event);
+  const encoder=new TextEncoder();
+  const key=await crypto.subtle.importKey('raw',encoder.encode(env.STRIPE_WEBHOOK_SECRET),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+  const sig=Buffer.from(await crypto.subtle.sign('HMAC',key,encoder.encode(timestamp+'.'+body))).toString('hex');
+  const request=new Request('https://test.local/api/stripe/webhook',{method:'POST',headers:{'Stripe-Signature':'t='+timestamp+',v1='+(bad?'0'.repeat(64):sig)},body});
+  return handleStripeWebhook(request,env);
+ };
+ const event=(session,type='checkout.session.completed')=>({livemode:false,type,data:{object:session}});
+ try{
+  env.STRIPE_SECRET_KEY='sk_live_fixture';
+  assert.equal((await reserve(shifts[0])).status,503);
+  env.STRIPE_SECRET_KEY='sk_test_fixture';
+  const result=await reserve(shifts[0]);
+  assert.equal(result.status,200);
+  const bid=result.body.id;
+  const pay=()=>req('alice',{action:'pay',id:bid});
+  assert.equal((await req('bob',{action:'pay',id:bid})).status,404);
+  const checkouts=await Promise.all([pay(),pay()]);
+  assert.ok(checkouts.every(r=>r.status===200&&r.body.checkoutUrl.startsWith('https://checkout.stripe.com/')));
+  assert.equal(created.length,1);
+  const checkout=sessions.get(created[0]);
+  assert.ok(checkout.expires_at-Math.floor(Date.now()/1000)>=34*60);
+  assert.equal((await req('alice')).body.reservations[0].status,'held');
+  assert.equal((await req('alice')).body.reservations[0].stripe_session_id,undefined);
+  const paid={...checkout,status:'complete',payment_status:'paid',payment_intent:'pi_fixture'};
+  assert.equal((await signed(event(paid),{bad:true})).status,400);
+  assert.equal((await signed(event(paid),{timestamp:Math.floor(Date.now()/1000)-301})).status,400);
+  assert.equal((await signed(event({...paid,amount_total:1}))).status,400);
+  assert.equal((await signed(event({...paid,payment_status:'unpaid'}))).status,400);
+  assert.equal((await signed({...event(paid),livemode:true})).status,400);
+  assert.equal((await req('alice')).body.reservations[0].status,'held');
+  Object.assign(checkout,paid);
+  assert.equal((await signed(event(paid))).status,200);
+  assert.equal((await signed(event(paid))).status,200);
+  assert.equal((await req('alice')).body.reservations[0].status,'confirmed');
+  const purchase=await handleWorkspace(new Request('https://test.local/api/workspace?memberId=alice&history=purchases'),env,{id:'owner',email:'owner@example.test'});
+  const {entries}=await purchase.json();
+  assert.equal(entries.length,1);
+  assert.equal(entries[0].payment_provider,'stripe_test');
+
+  const pending=(await reserve(shifts[1])).body.id;
+  await req('alice',{action:'pay',id:pending});
+  const expired=sessions.get(created[1]);
+  sql.prepare('UPDATE reservations SET expires=0 WHERE id=?').run(pending);
+  assert.equal((await req('bob')).body.shifts.some(s=>s.id===shifts[1].id),false);
+  Object.assign(expired,{status:'expired'});
+  assert.equal((await signed(event(expired,'checkout.session.expired'))).status,200);
+  assert.equal((await req('bob')).body.shifts.some(s=>s.id===shifts[1].id),true);
+  const cancelled=(await reserve(shifts[2])).body.id;
+  await req('alice',{action:'pay',id:cancelled});
+  assert.equal((await req('alice',{action:'cancel',id:cancelled})).status,200);
+  assert.equal(sessions.get(created[2]).status,'expired');
+ }finally{globalThis.fetch=originalFetch;}
 });
