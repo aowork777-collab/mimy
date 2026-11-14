@@ -451,6 +451,7 @@ test('Stripe sandbox confirms only signed matching payments and releases expired
  const originalFetch=globalThis.fetch;
  globalThis.fetch=async(url,options)=>{
   assert.equal(new URL(url).origin,'https://api.stripe.com');
+  assert.equal(options.redirect,'manual','Workers-compatible requests must not follow redirects with credentials');
   assert.equal(options.headers.get('Authorization'),'Bearer sk_test_fixture');
   if(options.body?.has('client_reference_id')){
    const form=options.body;

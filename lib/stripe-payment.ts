@@ -49,7 +49,8 @@ async function stripe(env:StripeEnv,path:string,body?:URLSearchParams,key?:strin
  let response:Response;
  try{
   response=await fetch('https://api.stripe.com/v1/checkout/sessions'+path,{
-   method:body?'POST':'GET',headers,body,redirect:'error',signal:AbortSignal.timeout(10000),
+   // Workers supports manual/follow only. Reject redirects via response.ok below.
+   method:body?'POST':'GET',headers,body,redirect:'manual',signal:AbortSignal.timeout(10000),
   });
  }catch{
   throw new PaymentFailure(502,'Stripeに接続できません。少し待ってから再試行してください');
