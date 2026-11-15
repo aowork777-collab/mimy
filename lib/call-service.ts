@@ -15,7 +15,7 @@ export async function handleCall(req:Request,env:CallEnv,identity:MemberIdentity
  if(!env.DB)return response({error:'データベースが未接続です'},503);
  if(await env.DB.prepare('SELECT id FROM members WHERE id=? AND blocked=1').bind(actor).first())return response({error:'このアカウントは利用停止されています'},403);
  let input:{id?:string;action?:string};try{const raw=await req.text();if(raw.length>1000)throw Error();input=JSON.parse(raw);if(!input||typeof input.id!=='string'||!['join','check'].includes(input.action||''))throw Error();}catch{return response({error:'予約の指定が不正です'},400);}
- const booking=await env.DB.prepare('SELECT r.*,s.starts,p.status AS cast_status FROM reservations r JOIN shifts s ON s.id=r.shift_id JOIN cast_profiles p ON p.id=r.cast_id WHERE r.id=? AND (r.customer=? OR r.cast_id=?) AND r.customer NOT IN (SELECT id FROM members WHERE blocked=1) AND r.cast_id NOT IN (SELECT id FROM members WHERE blocked=1)').bind(input.id,actor,actor).first<{id:string;status:string;starts:number;minutes:number;cast_status:string;customer:string;cast_id:string}>();
+ const booking=await env.DB.prepare('SELECT r.*,p.status AS cast_status FROM reservations r JOIN shifts s ON s.id=r.shift_id JOIN cast_profiles p ON p.id=r.cast_id WHERE r.id=? AND (r.customer=? OR r.cast_id=?) AND r.customer NOT IN (SELECT id FROM members WHERE blocked=1) AND r.cast_id NOT IN (SELECT id FROM members WHERE blocked=1)').bind(input.id,actor,actor).first<{id:string;status:string;starts:number;minutes:number;cast_status:string;customer:string;cast_id:string}>();
  if(!booking)return response({error:'予約が見つかりません'},404);
  if(!callConfigured(env))return response({error:'通話は準備中です。運営による無料プランの接続設定が必要です'},503);
  const end=booking.starts+booking.minutes*60000,now=Date.now();

@@ -61,3 +61,16 @@ rg -n 'handleStripeWebhook' app/api lib
 | 複数箇所の変更 | `node --test tests/*.test.mjs` |
 
 メールの実配信、Stripeの実際のサンドボックス画面とWebhook配送、2端末間の通話は、各サービスを接続した環境でも確認します。
+
+## 範囲シフト・SNSを変更する場合
+
+| 対象 | 実装 |
+| --- | --- |
+| 開始日・開始時刻・終了時刻の入力 | [ShiftEditor](../../components/shift-editor.tsx) |
+| 空き開始時刻と60分プランの可否 | [availableShifts](../../lib/shift-availability.ts) |
+| シフト・予約の登録と更新 | [workspace-service](../../lib/workspace-service.ts) |
+| 既存データの移行・時間の重複防止 | [0014マイグレーション](../../drizzle/0014_shift_ranges_and_socials.sql) |
+| SNS入力・リンク表示 | [cast-socials](../../components/cast-socials.tsx) |
+| ID・URLの確認と正規化 | [social-links](../../lib/social-links.ts) |
+
+30分単位・翌日終了・隣接予約・同時予約・既存予約の移行・SNSの不正URLは `tests/service.test.mjs` の範囲シフトとSNSのテストで確認します。

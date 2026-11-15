@@ -1,3 +1,5 @@
+import {availableShifts} from './shift-availability';
+import {socialPlatforms,socialProfileUrl} from './social-links';
 import type {MemberIdentity} from './email-auth';
 import {guardRequest,guardConfigured} from './call-guard-client';
 import {plans,priceFor} from './catalog';
@@ -40,7 +42,7 @@ async function memberHistory(db:D1Database,params:URLSearchParams,now:number){
     ORDER BY paid_at DESC,id DESC LIMIT ? OFFSET ?
    `).bind(testPaymentEvent,memberId,historyPageSize+1,offset)
   : db.prepare(`
-    SELECT r.id,r.created,s.starts,p.name AS cast_name,m.name AS customer_name,
+    SELECT r.id,r.created,r.starts,p.name AS cast_name,m.name AS customer_name,
      r.course,r.minutes,r.price,CASE
       WHEN r.status='held' AND r.stripe_session_id IS NULL AND r.expires<=? THEN 'expired' ELSE r.status END AS status,
      CASE WHEN r.customer=? THEN 'customer' ELSE 'cast' END AS participation
@@ -108,8 +110,8 @@ export async function handleWorkspace(req:Request,env:Environment,identity:Membe
  requireThat(['all','user','cast','admin'].includes(memberRole),400,'役割の指定が不正です');
  const roleFilter=memberRole==='all'?'1=1':memberRole==='admin'?'admin_protected=1':"admin_protected=0 AND role='"+memberRole+"'";
  const memberFilter="(name LIKE ? OR id LIKE ?) AND ("+roleFilter+")";
- const reservations=await rows(`SELECT r.id,r.customer,r.cast_id,r.shift_id,r.minutes,r.price,r.course,r.status,r.expires,r.created,r.test_paid_at,r.payment_provider,(r.stripe_session_id IS NOT NULL) AS stripe_checkout_started,s.starts,p.name AS cast_name,m.name AS customer_name FROM reservations r JOIN shifts s ON s.id=r.shift_id JOIN cast_profiles p ON p.id=r.cast_id JOIN members m ON m.id=r.customer WHERE ${admin?'1=1':'(r.customer=? OR r.cast_id=?)'} ORDER BY s.starts DESC`,...(admin?[]:[actor,actor]));
- return json({guestProfile:await q('SELECT bio,topics,style FROM guest_profiles WHERE id=?',actor).first(),members:admin?await rows('SELECT id,name,role,blocked,block_reason,admin_protected,created FROM members WHERE '+memberFilter+' ORDER BY created DESC,id LIMIT 50 OFFSET ?',search,search,Math.floor(memberPage)*50):[],memberTotal:admin?(await q('SELECT COUNT(*) n FROM members WHERE '+memberFilter,search,search).first<{n:number}>())!.n:0,adminInvites:admin?await rows('SELECT id,email,created,expires,accepted_by,accepted_at,revoked FROM admin_invites ORDER BY created DESC LIMIT 100'):[],me:{id:actor,name:me!.name,role},profile,casts:await rows("SELECT p.id,p.name,p.bio,p.headline,p.photo_url,p.topics,p.hobbies,p.style,p.pricing_tier,EXISTS(SELECT 1 FROM cast_favorites f WHERE f.member_id=? AND f.cast_id=p.id) AS is_favorite FROM cast_profiles p WHERE p.status='approved' AND p.id NOT IN (SELECT id FROM members WHERE blocked=1) ORDER BY is_favorite DESC,p.name,p.id",actor),shifts:await rows("SELECT s.* FROM shifts s JOIN cast_profiles p ON p.id=s.cast_id WHERE s.enabled=1 AND p.status='approved' AND s.cast_id NOT IN (SELECT id FROM members WHERE blocked=1) AND s.starts>? AND NOT EXISTS(SELECT 1 FROM reservations r WHERE r.shift_id=s.id AND r.status IN ('held','confirmed','completed')) ORDER BY s.starts",minStart),ownShifts:role==='cast'?await rows('SELECT s.*,r.status AS reservation_status FROM shifts s LEFT JOIN reservations r ON r.shift_id=s.id AND r.status IN (\'held\',\'confirmed\',\'completed\') WHERE s.cast_id=? AND s.starts>? ORDER BY s.starts',actor,now-86400000):[],reservations,messages:await rows("SELECT cm.*,m.name AS sender_name FROM conversation_messages cm JOIN reservations r ON r.id=cm.reservation JOIN members m ON m.id=cm.sender WHERE r.customer=? OR r.cast_id=? ORDER BY cm.created,cm.id",actor,actor),applications:admin?await rows('SELECT * FROM cast_profiles ORDER BY status,name'):[],events:admin?await rows('SELECT * FROM audit_events ORDER BY created DESC LIMIT 100'):[],reports:admin?await rows('SELECT p.* FROM reports p JOIN reservations r ON r.id=p.booking ORDER BY p.created DESC'):[],voiceConfigured:guardConfigured(env)&&!!(env.LIVEKIT_URL?.match(/^wss:\/\/[a-z0-9-]+\.livekit\.cloud$/i)&&env.LIVEKIT_API_KEY&&env.LIVEKIT_API_SECRET&&env.LIVEKIT_FREE_PLAN==='build'),paymentMode:stripeEnabled?'stripe_test':'test',stripeReady:stripeTestReady(env)});
+ const reservations=await rows(`SELECT r.id,r.customer,r.cast_id,r.shift_id,r.minutes,r.price,r.course,r.status,r.expires,r.created,r.test_paid_at,r.payment_provider,(r.stripe_session_id IS NOT NULL) AS stripe_checkout_started,r.starts,p.name AS cast_name,m.name AS customer_name FROM reservations r JOIN shifts s ON s.id=r.shift_id JOIN cast_profiles p ON p.id=r.cast_id JOIN members m ON m.id=r.customer WHERE ${admin?'1=1':'(r.customer=? OR r.cast_id=?)'} ORDER BY r.starts DESC`,...(admin?[]:[actor,actor]));
+ return json({guestProfile:await q('SELECT bio,topics,style FROM guest_profiles WHERE id=?',actor).first(),members:admin?await rows('SELECT id,name,role,blocked,block_reason,admin_protected,created FROM members WHERE '+memberFilter+' ORDER BY created DESC,id LIMIT 50 OFFSET ?',search,search,Math.floor(memberPage)*50):[],memberTotal:admin?(await q('SELECT COUNT(*) n FROM members WHERE '+memberFilter,search,search).first<{n:number}>())!.n:0,adminInvites:admin?await rows('SELECT id,email,created,expires,accepted_by,accepted_at,revoked FROM admin_invites ORDER BY created DESC LIMIT 100'):[],me:{id:actor,name:me!.name,role},profile,casts:await rows("SELECT p.id,p.name,p.bio,p.headline,p.photo_url,p.topics,p.hobbies,p.style,p.social_x,p.social_instagram,p.social_tiktok,p.social_youtube,p.pricing_tier,EXISTS(SELECT 1 FROM cast_favorites f WHERE f.member_id=? AND f.cast_id=p.id) AS is_favorite FROM cast_profiles p WHERE p.status='approved' AND p.id NOT IN (SELECT id FROM members WHERE blocked=1) ORDER BY is_favorite DESC,p.name,p.id",actor),shifts:await availableShifts(db,minStart,actor),ownShifts:role==='cast'?await rows("SELECT s.*,EXISTS(SELECT 1 FROM reservations r WHERE r.shift_id=s.id AND r.status IN ('held','confirmed','completed')) AS has_reservations FROM shifts s WHERE s.cast_id=? AND s.ends>? ORDER BY s.starts",actor,now-86400000):[],reservations,messages:await rows("SELECT cm.*,m.name AS sender_name FROM conversation_messages cm JOIN reservations r ON r.id=cm.reservation JOIN members m ON m.id=cm.sender WHERE r.customer=? OR r.cast_id=? ORDER BY cm.created,cm.id",actor,actor),applications:admin?await rows('SELECT * FROM cast_profiles ORDER BY status,name'):[],events:admin?await rows('SELECT * FROM audit_events ORDER BY created DESC LIMIT 100'):[],reports:admin?await rows('SELECT p.* FROM reports p JOIN reservations r ON r.id=p.booking ORDER BY p.created DESC'):[],voiceConfigured:guardConfigured(env)&&!!(env.LIVEKIT_URL?.match(/^wss:\/\/[a-z0-9-]+\.livekit\.cloud$/i)&&env.LIVEKIT_API_KEY&&env.LIVEKIT_API_SECRET&&env.LIVEKIT_FREE_PLAN==='build'),paymentMode:stripeEnabled?'stripe_test':'test',stripeReady:stripeTestReady(env)});
  }
  const raw=await req.text();requireThat(raw.length<=10000,413,'送信内容が長すぎます');let a:any;try{a=JSON.parse(raw);}catch{throw new Failure(400,'JSON形式が不正です');}requireThat(a&&typeof a==='object',400,'入力が不正です');
 
@@ -171,7 +173,7 @@ export async function handleWorkspace(req:Request,env:Environment,identity:Membe
  const target=await q('SELECT * FROM members WHERE id=?',a.target).first<{id:string;admin_protected:number}>();requireThat(target,404,'アカウントがありません');
  requireThat(!target!.admin_protected&&!(await q('SELECT id FROM admin_invites WHERE accepted_by=? AND revoked=0',a.target).first()),403,'管理者の停止には対応していません');
  requireThat(!a.blocked||a.reason.trim().length>0,400,'停止理由を入力してください');
- const live=await rows("SELECT r.id,r.customer,r.cast_id,r.minutes,s.starts FROM reservations r JOIN shifts s ON s.id=r.shift_id WHERE (r.customer=? OR r.cast_id=?) AND r.status='confirmed' AND s.starts<=? AND s.starts+r.minutes*60000>?",a.target,a.target,now,now);
+ const live=await rows("SELECT r.id,r.customer,r.cast_id,r.minutes,r.starts FROM reservations r JOIN shifts s ON s.id=r.shift_id WHERE (r.customer=? OR r.cast_id=?) AND r.status='confirmed' AND r.starts<=? AND r.starts+r.minutes*60000>?",a.target,a.target,now,now);
  await db.batch([q('UPDATE members SET blocked=?,block_reason=? WHERE id=?',a.blocked?1:0,a.blocked?a.reason.trim():'',a.target),...(a.blocked?[q("UPDATE reservations SET status='cancelled' WHERE (customer=? OR cast_id=?) AND status IN ('held','confirmed') AND (status<>'held' OR stripe_session_id IS NULL)",a.target,a.target)]:[]),audit(a.target,a.blocked?'アカウント利用停止: '+a.reason.trim():'アカウント利用停止を解除')]);
  let pending=0;if(a.blocked)for(const room of live){try{await guardRequest(env,'close',{id:String(room.id),endsAt:Number(room.starts)+Number(room.minutes)*60000,participants:[String(room.customer),String(room.cast_id)]});}catch{pending++;}}
  return json({ok:true,warning:pending?'アカウントは停止しましたが、進行中の通話終了サーバーへの連絡に失敗しました。通話の停止状況を確認してください。':undefined});
@@ -216,22 +218,58 @@ export async function handleWorkspace(req:Request,env:Environment,identity:Membe
  requireThat(role==='cast'&&profile?.status==='approved',403,'承認されたキャストのみ操作できます');requireThat(text(a.name,40)&&text(a.bio,500),400,'プロフィールの内容が不正です');const fields=['headline','photo_url','topics','hobbies','style'];const limits=[60,1000,100,200,100];
  const values=fields.map((key,i)=>{const value=a[key]===undefined?String(profile?.[key]||''):a[key];requireThat(typeof value==='string'&&value.trim().length<=limits[i],400,'プロフィール項目の長さが不正です');return value.trim();});
  if(values[1]&&values[1]!==profile?.photo_url){let valid=false;try{const u=new URL(values[1]);valid=u.protocol==='https:'&&!u.username&&!u.password&&!!u.hostname;}catch{}requireThat(valid,400,'写真はHTTPSのURLを指定してください');}
- await db.batch([q('UPDATE cast_profiles SET name=?,bio=?,headline=?,photo_url=?,topics=?,hobbies=?,style=? WHERE id=?',a.name.trim(),a.bio.trim(),...values,actor),audit(actor,'プロフィール更新')]);return json({ok:true});
+ const socials=socialPlatforms.map(platform=>{
+  try{return socialProfileUrl(platform.key,a[platform.key]===undefined?String(profile?.[platform.key]||''):a[platform.key]);}
+  catch(error){throw new Failure(400,(error as Error).message);}
+ });
+ await db.batch([q('UPDATE cast_profiles SET name=?,bio=?,headline=?,photo_url=?,topics=?,hobbies=?,style=?,social_x=?,social_instagram=?,social_tiktok=?,social_youtube=? WHERE id=?',a.name.trim(),a.bio.trim(),...values,...socials,actor),audit(actor,'プロフィール更新')]);return json({ok:true});
  }
  if(a.action==='shiftAdd'||a.action==='shiftToggle'){
- requireThat(role==='cast'&&profile?.status==='approved',403,'承認されたキャストのみ操作できます');
- if(a.action==='shiftAdd'){
- requireThat(Number.isSafeInteger(a.starts)&&a.starts%3600000===0&&a.starts>now+900000&&a.starts<now+90*86400000,400,'90日以内の未来の毎正時を指定してください');
- await db.batch([q('INSERT INTO shifts VALUES(?,?,?,1)',crypto.randomUUID(),actor,a.starts),audit(actor,'シフト登録')]);
- }else{requireThat(typeof a.id==='string'&&[0,1].includes(a.enabled),400,'入力が不正です');const shift=await q('SELECT * FROM shifts WHERE id=? AND cast_id=?',a.id,actor).first();requireThat(shift,404,'シフトがありません');const result=await q("UPDATE shifts SET enabled=? WHERE id=? AND cast_id=? AND NOT EXISTS(SELECT 1 FROM reservations WHERE shift_id=? AND status IN ('held','confirmed','completed'))",a.enabled,a.id,actor,a.id).run();requireThat(result.meta.changes===1,409,'予約済みの枠は変更できません');await audit(a.id,'シフト公開状態変更').run();}return json({ok:true});
+  requireThat(role==='cast'&&profile?.status==='approved',403,'承認されたキャストのみ操作できます');
+  if(a.action==='shiftAdd'){
+   const ends=a.ends??a.starts+3600000;
+   requireThat(Number.isSafeInteger(a.starts)&&Number.isSafeInteger(ends)&&
+    a.starts%1800000===0&&ends%1800000===0&&a.starts>now+900000&&
+    ends>a.starts&&ends-a.starts<=86400000&&ends<now+90*86400000,
+    400,'90日以内・30分単位で、開始から24時間以内の終了時刻を指定してください');
+   await db.batch([
+    q('INSERT INTO shifts(id,cast_id,starts,ends,enabled) VALUES(?,?,?,?,1)',crypto.randomUUID(),actor,a.starts,ends),
+    audit(actor,'シフト登録')
+   ]);
+  }else{
+   requireThat(typeof a.id==='string'&&[0,1].includes(a.enabled),400,'入力が不正です');
+   const shift=await q('SELECT id FROM shifts WHERE id=? AND cast_id=?',a.id,actor).first();
+   requireThat(shift,404,'シフトがありません');
+   // Hide remaining availability without cancelling reservations already accepted.
+   await q('UPDATE shifts SET enabled=? WHERE id=? AND cast_id=?',a.enabled,a.id,actor).run();
+   await audit(a.id,'シフト公開状態変更').run();
+  }
+  return json({ok:true});
  }
  if(a.action==='reserve'){
- requireThat(!stripeEnabled||stripeTestReady(env),503,'Stripeテスト決済の準備中です');
- requireThat(role==='user',403,'予約は利用者アカウントで行ってください');const plan=plans.find(p=>p.minutes===a.minutes);requireThat(plan&&['雑談','会話練習'].includes(a.course)&&a.agree===true,400,'プランと同意を確認してください');requireThat(a.course!=='会話練習'||a.minutes>=30,400,'会話練習は30分以上です');
- const shift=await q("SELECT s.*,p.pricing_tier FROM shifts s JOIN cast_profiles p ON p.id=s.cast_id WHERE s.id=? AND s.enabled=1 AND p.status='approved' AND s.cast_id NOT IN (SELECT id FROM members WHERE blocked=1) AND s.starts>?",a.shiftId||'',minStart).first<{id:string;cast_id:string;starts:number;pricing_tier:string}>();requireThat(shift&&shift.cast_id!==actor,409,'この枠は予約できません');const price=priceFor(shift!.pricing_tier,a.minutes);requireThat(price!==null,400,'料金プランを確認してください');requireThat(a.quotedPrice===undefined||a.quotedPrice===price,409,'料金が更新されました。表示を確認して再度予約してください');const bid=crypto.randomUUID();
- const result=await q("INSERT INTO reservations (id,customer,cast_id,shift_id,minutes,price,course,status,expires,created,payment_provider) SELECT ?,?,?,?,?,?,?,'held',?,?,? WHERE EXISTS(SELECT 1 FROM shifts s JOIN cast_profiles p ON p.id=s.cast_id WHERE s.id=? AND s.enabled=1 AND p.status='approved' AND s.cast_id NOT IN (SELECT id FROM members WHERE blocked=1)) AND (SELECT pricing_tier FROM cast_profiles WHERE id=?)=? AND ? NOT IN (SELECT id FROM members WHERE blocked=1)",bid,actor,shift!.cast_id,shift!.id,plan!.minutes,price!,a.course,now+600000,now,stripeEnabled?'stripe_test':'demo',shift!.id,shift!.cast_id,shift!.pricing_tier,actor).run();requireThat(result.meta.changes===1,409,'この枠は予約できません');await audit(bid,'予約仮押さえ').run();return json({id:bid});
+  requireThat(!stripeEnabled||stripeTestReady(env),503,'Stripeテスト決済の準備中です');
+  requireThat(role==='user',403,'予約は利用者アカウントで行ってください');
+  const plan=plans.find(p=>p.minutes===a.minutes);
+  requireThat(plan&&['雑談','会話練習'].includes(a.course)&&a.agree===true,400,'プランと同意を確認してください');
+  const shift=await q("SELECT s.*,p.pricing_tier FROM shifts s JOIN cast_profiles p ON p.id=s.cast_id WHERE s.id=? AND s.enabled=1 AND p.status='approved' AND s.cast_id NOT IN (SELECT id FROM members WHERE blocked=1)",a.shiftId||'').first<{id:string;cast_id:string;starts:number;ends:number;pricing_tier:string}>();
+  requireThat(shift&&shift.cast_id!==actor,409,'このシフトは予約できません');
+  const starts=a.starts??shift!.starts;
+  const ends=starts+a.minutes*60000;
+  requireThat(Number.isSafeInteger(starts)&&starts%1800000===0&&starts>minStart&&starts>=shift!.starts&&ends<=shift!.ends,409,'選択した時間は予約できません。空き時間を選び直してください');
+  const price=priceFor(shift!.pricing_tier,a.minutes);
+  requireThat(price!==null,400,'料金プランを確認してください');
+  requireThat(a.quotedPrice===undefined||a.quotedPrice===price,409,'料金が更新されました。表示を確認して再度予約してください');
+  const bid=crypto.randomUUID();
+  const result=await q(
+   "INSERT INTO reservations (id,customer,cast_id,shift_id,starts,minutes,price,course,status,expires,created,payment_provider) SELECT ?,?,?,?,?,?,?,?,'held',?,?,? WHERE EXISTS(SELECT 1 FROM shifts s JOIN cast_profiles p ON p.id=s.cast_id WHERE s.id=? AND s.enabled=1 AND s.starts<=? AND s.ends>=? AND p.status='approved' AND p.pricing_tier=? AND s.cast_id NOT IN (SELECT id FROM members WHERE blocked=1)) AND ? NOT IN (SELECT id FROM members WHERE blocked=1)",
+   bid,actor,shift!.cast_id,shift!.id,starts,a.minutes,price!,a.course,now+600000,now,stripeEnabled?'stripe_test':'demo',
+   shift!.id,starts,ends,shift!.pricing_tier,actor
+  ).run();
+  requireThat(result.meta.changes===1,409,'この時間は予約できません');
+  await audit(bid,'予約仮押さえ').run();
+  return json({id:bid});
  }
- requireThat(typeof a.id==='string',400,'予約を指定してください');const booking=await q('SELECT r.*,s.starts FROM reservations r JOIN shifts s ON s.id=r.shift_id WHERE r.id=?',a.id).first<any>();
+ requireThat(typeof a.id==='string',400,'予約を指定してください');const booking=await q('SELECT r.* FROM reservations r WHERE r.id=?',a.id).first<any>();
  requireThat(booking&&(admin||booking.customer===actor||booking.cast_id===actor),404,'予約が見つかりません');
  if(a.action==='pay'){
  requireThat(booking.customer===actor,403,'予約した利用者のみ操作できます');if(booking.status==='confirmed')return json({ok:true});
@@ -262,5 +300,5 @@ export async function handleWorkspace(req:Request,env:Environment,identity:Membe
  return Response.json({error:`連続送信を防ぐため、メッセージは1分間に20件までです。${retryAfter}秒ほど待ってから送信してください。`,retryAfter},{status:429,headers:{'Cache-Control':'no-store','Retry-After':String(retryAfter)}});
  }
  }else throw new Failure(400,'未対応の操作です');return json({ok:true});
- }catch(e){if(e instanceof Failure||e instanceof PaymentFailure)return json({error:e.message},e.status);if(String(e).includes('UNIQUE'))return json({error:'この枠はすでに登録・予約されています。'},409);console.error('workspace operation failed');return json({error:'処理に失敗しました。再読み込みして状態を確認してください。'},500);}
+ }catch(e){if(String(e).includes('reservation_overlap'))return json({error:'この時間はすでに予約されています。別の開始時刻を選んでください'},409);if(String(e).includes('shift_overlap'))return json({error:'公開中のシフトと時間が重複しています'},409);if(e instanceof Failure||e instanceof PaymentFailure)return json({error:e.message},e.status);if(String(e).includes('UNIQUE'))return json({error:'この枠はすでに登録・予約されています。'},409);console.error('workspace operation failed');return json({error:'処理に失敗しました。再読み込みして状態を確認してください。'},500);}
 }

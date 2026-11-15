@@ -82,9 +82,7 @@ export async function startStripeCheckout(env:StripeEnv,booking:StripeBooking,or
   const updated=await db.prepare(`
    UPDATE reservations SET stripe_checkout_expires=?,expires=?
    WHERE id=? AND customer=? AND status='held' AND payment_provider='stripe_test'
-    AND stripe_checkout_expires IS NULL AND expires>? AND ?<(
-     SELECT starts FROM shifts WHERE id=reservations.shift_id
-    )
+    AND stripe_checkout_expires IS NULL AND expires>? AND ?<starts
    RETURNING stripe_checkout_expires
   `).bind(deadline,deadline*1000,booking.id,booking.customer,now,deadline*1000).first<{stripe_checkout_expires:number}>();
   const expiry=updated?.stripe_checkout_expires??(await db.prepare(`
@@ -185,7 +183,7 @@ export async function handleStripeWebhook(req:Request,env:StripeEnv,now=Date.now
  if(!session||session.livemode!==false||session.mode!=='payment'||!/^cs_test_\w+$/.test(session.id||''))return reply(400);
  const db=env.DB;
  const booking=await db.prepare(`
-  SELECT r.*,s.starts FROM reservations r JOIN shifts s ON s.id=r.shift_id
+  SELECT r.* FROM reservations r
   WHERE r.stripe_session_id=? AND r.payment_provider='stripe_test'
  `).bind(session.id).first<StripeBooking>();
  if(!booking)return reply(200);

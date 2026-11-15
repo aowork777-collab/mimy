@@ -8,9 +8,11 @@ const url=s=>'data:text/javascript;base64,'+Buffer.from(compile(s)).toString('ba
 const catalog=url(fs.readFileSync('lib/catalog.ts','utf8'));
 globalThis.__guardJobs=[];globalThis.__guardFail=false;
 const guardMock=url(`export const guardConfigured=e=>!!e.CALL_GUARD_URL;export async function guardRequest(e,a,j){if(globalThis.__guardFail)throw Error('offline');globalThis.__guardJobs.push({action:a,...j});}`);
+const availabilityModule=url(fs.readFileSync('lib/shift-availability.ts','utf8'));
+const socialModule=url(fs.readFileSync('lib/social-links.ts','utf8'));
 const stripeModule=url(fs.readFileSync('lib/stripe-payment.ts','utf8'));
 const {handleStripeWebhook}=await import(stripeModule);
-const {handleWorkspace}=await import(url(fs.readFileSync('lib/workspace-service.ts','utf8').replace("'./stripe-payment'",JSON.stringify(stripeModule)).replace("'./catalog'",JSON.stringify(catalog)).replace("'./call-guard-client'",JSON.stringify(guardMock))));
+const {handleWorkspace}=await import(url(fs.readFileSync('lib/workspace-service.ts','utf8').replace("'./shift-availability'",JSON.stringify(availabilityModule)).replace("'./social-links'",JSON.stringify(socialModule)).replace("'./stripe-payment'",JSON.stringify(stripeModule)).replace("'./catalog'",JSON.stringify(catalog)).replace("'./call-guard-client'",JSON.stringify(guardMock))));
 function setup(){
  const sql=new DatabaseSync(':memory:');sql.exec('PRAGMA foreign_keys=ON');
  for(const f of fs.readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())sql.exec(fs.readFileSync('drizzle/'+f,'utf8'));
@@ -50,10 +52,11 @@ test('separate accounts: approval, shifts, shared inventory and private conversa
  const id=result.find(r=>r.status===200).body.id;
  assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM reservations').get().n,1);
  assert.equal((await req(winner)).body.reservations[0].price,1990);
- assert.equal((await req(loser)).body.shifts.length,0);
+ assert.equal((await req(loser)).body.shifts.length,1);
  assert.equal((await req(loser)).body.reservations.length,0);
  assert.equal((await req('cast')).body.reservations.length,1);
- assert.equal((await req('cast',{action:'shiftToggle',id:shift,enabled:0})).status,409);
+ assert.equal((await req('cast',{action:'shiftToggle',id:shift,enabled:0})).status,200);
+ assert.equal((await req('cast',{action:'shiftToggle',id:shift,enabled:1})).status,200);
  assert.equal((await req(loser,{action:'pay',id})).status,404);
  assert.equal((await req('cast',{action:'pay',id})).status,403);
  assert.equal((await req(winner,{action:'message',id,body:'未確定'})).status,409);
@@ -72,10 +75,10 @@ test('separate accounts: approval, shifts, shared inventory and private conversa
  assert.equal((await req('cast',{action:'cancel',id})).status,403);
  assert.equal((await req(winner,{action:'cancel',id})).status,200);
  assert.equal((await req(winner,{action:'message',id,body:'取り消し後'})).status,409);
- assert.equal((await req(loser)).body.shifts.length,1);
+ assert.equal((await req(loser)).body.shifts.length,2);
  assert.equal((await req(loser, reserve)).status,200);
  sql.prepare("UPDATE reservations SET expires=0 WHERE status='held'").run();
- assert.equal((await req(winner)).body.shifts.length,1);
+ assert.equal((await req(winner)).body.shifts.length,2);
  assert.equal((await req(winner,reserve)).status,200);
  assert.equal((await req('owner',{action:'review',target:'cast',decision:'suspend'})).status,200);
  assert.equal((await req('cast',{action:'shiftAdd',starts:start+3600000})).status,403);
@@ -112,14 +115,14 @@ test('voice: fail closed, participant authorization, time limits and camera and 
  assert.equal((await call('alice')).status,503);assert.equal((await call('bob')).status,404);assert.equal((await call('owner')).status,404);
  Object.assign(env,{LIVEKIT_URL:'wss://test.livekit.cloud',LIVEKIT_API_KEY:'test',LIVEKIT_API_SECRET:'test',LIVEKIT_FREE_PLAN:'build'});
  assert.equal((await call('alice')).status,409);await req('alice',{action:'pay',id});assert.equal((await call('alice')).status,409);
- sql.prepare('UPDATE shifts SET starts=? WHERE id=?').run(Date.now()-60000,shift);
+ sql.prepare('UPDATE reservations SET starts=? WHERE shift_id=?').run(Date.now()-60000,shift);
  for(const who of ['alice','cast']){const result=await call(who);assert.equal(result.status,200);const token=JSON.parse(result.body.token);assert.equal(token.options.identity,who);assert.ok(token.options.ttl<=60);assert.deepEqual(token.grant.canPublishSources,[2,1]);assert.equal(token.grant.canPublishData,false);assert.equal(token.grant.room,'reservation-'+id);}
  assert.equal(calls.filter(c=>c.name).at(-1).maxParticipants,2);
  assert.equal((await call('alice','check')).status,200);
  await req('owner',{action:'review',target:'cast',decision:'suspend'});assert.equal((await call('alice')).status,409);
  await req('owner',{action:'review',target:'cast',decision:'approve'});
- sql.prepare('UPDATE shifts SET starts=? WHERE id=?').run(Date.now()-31*60000,shift);assert.equal((await call('cast')).status,409);assert.equal(calls.at(-1).deleted,'reservation-'+id);
- sql.prepare('UPDATE shifts SET starts=? WHERE id=?').run(Date.now()-60000,shift);
+ sql.prepare('UPDATE reservations SET starts=? WHERE shift_id=?').run(Date.now()-31*60000,shift);assert.equal((await call('cast')).status,409);assert.equal(calls.at(-1).deleted,'reservation-'+id);
+ sql.prepare('UPDATE reservations SET starts=? WHERE shift_id=?').run(Date.now()-60000,shift);
  await req('alice',{action:'cancel',id});assert.equal((await call('alice')).status,409);
  env.LIVEKIT_FREE_PLAN='ship';assert.equal((await call('alice')).status,503);
 });
@@ -184,7 +187,7 @@ test('message quota is per actor across reservations, atomic under concurrency a
  const{req,sql}=setup();await req('alice');await req('bob');await req('cast',{action:'apply',name:'C',bio:'intro'});await req('owner',{action:'review',target:'cast',decision:'approve'});
  const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;
  for(let i=0;i<2;i++)await req('cast',{action:'shiftAdd',starts:start+i*3600000});
- const slots=(await req('alice')).body.shifts;const ids=[];
+ const slots=(await req('alice')).body.shifts.filter(s=>s.starts%3600000===0);const ids=[];
  for(const slot of slots){const id=(await req('alice',{action:'reserve',shiftId:slot.id,minutes:30,course:'雑談',adult:true,agree:true})).body.id;await req('alice',{action:'pay',id});ids.push(id);}
  const responses=await Promise.all(Array.from({length:30},(_,i)=>req('alice',{action:'message',id:ids[i%2],body:'hello '+i})));
  assert.equal(responses.filter(r=>r.status===200).length,20);assert.equal(responses.filter(r=>r.status===429).length,10);
@@ -231,7 +234,7 @@ test('transparent, progressive and animated photo containers remain supported',(
 test('moderation: admin-only blocking stops APIs, hides cast, cancels reservations and can be lifted',async()=>{
  const{req,sql,env}=setup();await req('alice');await req('bob');await req('cast',{action:'apply',name:'C',bio:'intro'});await req('owner',{action:'review',target:'cast',decision:'approve'});
  const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;await req('cast',{action:'shiftAdd',starts:start});const shift=(await req('alice')).body.shifts[0].id;
- const id=(await req('alice',{action:'reserve',shiftId:shift,minutes:30,course:'雑談',adult:true,agree:true})).body.id;await req('alice',{action:'pay',id});sql.prepare('UPDATE shifts SET starts=? WHERE id=?').run(Date.now()-1000,shift);
+ const id=(await req('alice',{action:'reserve',shiftId:shift,minutes:30,course:'雑談',adult:true,agree:true})).body.id;await req('alice',{action:'pay',id});sql.prepare('UPDATE reservations SET starts=? WHERE shift_id=?').run(Date.now()-1000,shift);
  const block={action:'memberBlock',target:'alice',blocked:true,reason:'test violation'};
  assert.equal((await req('bob',block)).status,403);assert.equal((await req('owner',{...block,target:'owner'})).status,400);
  assert.equal((await req('owner',block)).status,200);assert.equal((await req('alice')).status,403);assert.equal((await req('alice',{action:'profile',name:'bypass'})).status,403);
@@ -246,7 +249,7 @@ test('moderation: admin-only blocking stops APIs, hides cast, cancels reservatio
 
 test('guard registration is required before joining; unavailable scheduler fails closed',async()=>{
  const{req,sql,env}=setup();await req('cast',{action:'apply',name:'C',bio:'intro'});await req('owner',{action:'review',target:'cast',decision:'approve'});
- const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;await req('cast',{action:'shiftAdd',starts:start});const shift=(await req('alice')).body.shifts[0].id;const id=(await req('alice',{action:'reserve',shiftId:shift,minutes:30,course:'雑談',agree:true})).body.id;await req('alice',{action:'pay',id});sql.prepare('UPDATE shifts SET starts=? WHERE id=?').run(Date.now()-1000,shift);
+ const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;await req('cast',{action:'shiftAdd',starts:start});const shift=(await req('alice')).body.shifts[0].id;const id=(await req('alice',{action:'reserve',shiftId:shift,minutes:30,course:'雑談',agree:true})).body.id;await req('alice',{action:'pay',id});sql.prepare('UPDATE reservations SET starts=? WHERE shift_id=?').run(Date.now()-1000,shift);
  Object.assign(env,{LIVEKIT_URL:'wss://test.livekit.cloud',LIVEKIT_API_KEY:'test',LIVEKIT_API_SECRET:'test',LIVEKIT_FREE_PLAN:'build'});
  const call=()=>handleCall(new Request('https://test.local/api/call',{method:'POST',headers:{origin:'https://test.local','oai-authenticated-user-id':'alice','oai-authenticated-user-email':'alice@example.test'},body:JSON.stringify({id,action:'join'})}),env);
  delete env.CALL_GUARD_URL;assert.equal((await call()).status,503);env.CALL_GUARD_URL='https://guard.test';
@@ -286,7 +289,7 @@ test('member details are admin-only and keep past purchases after cancellation',
 
  const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;
  for(let i=0;i<4;i++)await req('cast',{action:'shiftAdd',starts:start+i*3600000});
- const {body:{shifts}}=await req('alice');
+ const shifts=(await req('alice')).body.shifts.filter(s=>s.starts%3600000===0);
  const reserve=async(who,shift)=> (await req(who,{
   action:'reserve',shiftId:shift.id,minutes:30,course:'雑談',agree:true,
  })).body.id;
@@ -444,8 +447,8 @@ test('Stripe sandbox confirms only signed matching payments and releases expired
  await req('owner',{action:'review',target:'cast',decision:'approve'});
  const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;
  for(let i=0;i<3;i++)await req('cast',{action:'shiftAdd',starts:start+i*3600000});
- const shifts=(await req('alice')).body.shifts;
- const reserve=shift=>req('alice',{action:'reserve',shiftId:shift.id,minutes:30,course:'雑談',agree:true});
+ const shifts=(await req('alice')).body.shifts.filter(s=>s.starts%3600000===0);
+ const reserve=shift=>req('alice',{action:'reserve',shiftId:shift.id,starts:shift.starts+1800000,minutes:30,course:'雑談',agree:true});
  const sessions=new Map();
  const created=[];
  const originalFetch=globalThis.fetch;
@@ -521,13 +524,95 @@ test('Stripe sandbox confirms only signed matching payments and releases expired
   await req('alice',{action:'pay',id:pending});
   const expired=sessions.get(created[1]);
   sql.prepare('UPDATE reservations SET expires=0 WHERE id=?').run(pending);
-  assert.equal((await req('bob')).body.shifts.some(s=>s.id===shifts[1].id),false);
+  assert.equal((await req('bob')).body.shifts.some(s=>s.id===shifts[1].id&&s.starts===shifts[1].starts+1800000),false);
   Object.assign(expired,{status:'expired'});
   assert.equal((await signed(event(expired,'checkout.session.expired'))).status,200);
-  assert.equal((await req('bob')).body.shifts.some(s=>s.id===shifts[1].id),true);
+  assert.equal((await req('bob')).body.shifts.some(s=>s.id===shifts[1].id&&s.starts===shifts[1].starts+1800000),true);
   const cancelled=(await reserve(shifts[2])).body.id;
   await req('alice',{action:'pay',id:cancelled});
   assert.equal((await req('alice',{action:'cancel',id:cancelled})).status,200);
   assert.equal(sessions.get(created[2]).status,'expired');
  }finally{globalThis.fetch=originalFetch;}
+});
+
+test('range shifts reserve independent half-hours, reject overlap atomically and release cancelled holds',async()=>{
+ const {req,sql}=setup();
+ for(const cast of ['cast','other']){
+  await req(cast,{action:'apply',name:cast,bio:'紹介'});
+  await req('owner',{action:'review',target:cast,decision:'approve'});
+ }
+ const start=Math.ceil((Date.now()+86400000)/3600000)*3600000;
+ const half=1800000;
+ assert.equal((await req('cast',{action:'shiftAdd',starts:start,ends:start+4*half})).status,200);
+ assert.equal((await req('other',{action:'shiftAdd',starts:start,ends:start+4*half})).status,200);
+ assert.equal((await req('cast',{action:'shiftAdd',starts:start+half,ends:start+5*half})).status,409);
+ assert.equal((await req('cast',{action:'shiftAdd',starts:start,ends:start-1})).status,400);
+ assert.equal((await req('cast',{action:'shiftAdd',starts:start+60000,ends:start+half})).status,400);
+ const available=(await req('alice')).body.shifts.filter(s=>s.cast_id==='cast');
+ assert.deepEqual(available.map(s=>s.starts),[start,start+half,start+2*half,start+3*half]);
+ assert.deepEqual(available.map(s=>s.can_book_60),[1,1,1,0]);
+ const shiftId=available[0].id;
+ const otherId=(await req('alice')).body.shifts.find(s=>s.cast_id==='other').id;
+ const reserve=(who,starts,minutes=30,id=shiftId)=>req(who,{action:'reserve',shiftId:id,starts,minutes,course:'雑談',agree:true});
+ assert.equal((await reserve('alice',start+3*half,60)).status,409);
+ const midnight=Date.parse(new Date(start+9*3600000).toISOString().slice(0,10)+'T23:30:00+09:00')+86400000;
+ assert.equal((await req('cast',{action:'shiftAdd',starts:midnight,ends:midnight+3*half})).status,200);
+ const night=(await req('alice')).body.shifts.filter(s=>s.cast_id==='cast'&&s.starts>=midnight);
+ assert.equal(night.length,3);
+ assert.equal(night[1].starts,midnight+half);
+ const first=await reserve('alice',start,30);assert.equal(first.status,200);
+ assert.equal((await reserve('alice',start,30,otherId)).status,409,'customer cannot book overlapping calls');
+ assert.equal((await reserve('bob',start,60)).status,409);
+ const competition=await Promise.all([reserve('bob',start+half,60),reserve('carol',start+2*half,30)]);
+ assert.deepEqual(competition.map(r=>r.status).sort(),[200,409]);
+ const winner=competition[0].status===200?'bob':'carol';
+ const won=competition.find(r=>r.status===200).body.id;
+ assert.equal((await req(winner,{action:'cancel',id:won})).status,200);
+ const next=await reserve('bob',start+half,60);assert.equal(next.status,200);
+ assert.equal((await reserve('carol',start+3*half,30)).status,200,'end-exclusive boundary permits back-to-back calls');
+ assert.equal((await req('alice')).body.reservations[0].starts,start);
+ assert.equal(sql.prepare('SELECT starts FROM reservations WHERE id=?').get(next.body.id).starts,start+half);
+ assert.equal((await req('cast',{action:'shiftToggle',id:shiftId,enabled:0})).status,200);
+ assert.equal((await req('alice')).body.reservations[0].status,'held');
+ assert.equal((await req('bob',{action:'pay',id:next.body.id})).status,200,'existing reservations survive closing new intake');
+ assert.equal((await req('alice')).body.shifts.filter(s=>s.cast_id==='cast'&&s.id===shiftId).length,0);
+ assert.equal((await req('cast',{action:'shiftToggle',id:shiftId,enabled:1})).status,200);
+ assert.equal((await req('alice',{action:'cancel',id:first.body.id})).status,200);
+ const restored=(await req('fresh')).body.shifts.filter(s=>s.cast_id==='cast'&&s.id===shiftId);
+ assert.deepEqual(restored.map(s=>[s.starts,s.can_book_60]),[[start,0]],'60-minute option is hidden when next half-hour is occupied');
+ assert.throws(()=>sql.prepare("UPDATE reservations SET starts=? WHERE id=?").run(start+2*half,next.body.id),/reservation_overlap/);
+});
+
+test('range migration backfills legacy times and preserves paid bookings',()=>{
+ const sql=new DatabaseSync(':memory:');sql.exec('PRAGMA foreign_keys=ON');
+ const migrations=fs.readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort();
+ for(const file of migrations.filter(f=>f<'0014'))sql.exec(fs.readFileSync('drizzle/'+file,'utf8'));
+ sql.exec("INSERT INTO members(id,name,role,created) VALUES('cast','C','cast',1),('user','U','user',1)");
+ sql.exec("INSERT INTO shifts(id,cast_id,starts,enabled) VALUES('old','cast',3600000,1)");
+ sql.exec("INSERT INTO reservations(id,customer,cast_id,shift_id,minutes,price,course,status,expires,created) VALUES('paid','user','cast','old',30,1990,'雑談','confirmed',1,1)");
+ sql.exec(fs.readFileSync('drizzle/0014_shift_ranges_and_socials.sql','utf8'));
+ assert.equal(sql.prepare('SELECT ends FROM shifts').get().ends,7200000);
+ assert.deepEqual({...sql.prepare('SELECT starts,minutes,status,price FROM reservations').get()},{starts:3600000,minutes:30,status:'confirmed',price:1990});
+});
+
+test('social profiles accept IDs and official URLs, preserve omitted fields and reject unsafe links',async()=>{
+ const {req}=setup();
+ await req('cast',{action:'apply',name:'C',bio:'intro'});
+ const input={action:'castProfile',name:'C',bio:'intro',social_x:'@mimy_test',social_instagram:'https://www.instagram.com/mimy.test/?utm_source=test',social_tiktok:'@mimy_test',social_youtube:'https://www.youtube.com/@mimytest'};
+ assert.equal((await req('cast',input)).status,403);
+ await req('owner',{action:'review',target:'cast',decision:'approve'});
+ assert.equal((await req('cast',input)).status,200);
+ const profile=(await req('viewer')).body.casts[0];
+ assert.equal(profile.social_x,'https://x.com/mimy_test');
+ assert.equal(profile.social_instagram,'https://instagram.com/mimy.test');
+ assert.equal(profile.social_tiktok,'https://www.tiktok.com/@mimy_test');
+ assert.equal(profile.social_youtube,'https://www.youtube.com/@mimytest');
+ for(const value of ['javascript:alert(1)','https://x.com.evil.test/name','https://user:pass@x.com/name','http://x.com/name','https://x.com:444/name','<script>']){
+  assert.equal((await req('cast',{...input,social_x:value})).status,400,value);
+ }
+ assert.equal((await req('cast',{action:'castProfile',name:'New',bio:'new'})).status,200);
+ assert.equal((await req('cast')).body.profile.social_x,profile.social_x);
+ assert.equal((await req('cast',{...input,social_x:''})).status,200);
+ assert.equal((await req('viewer')).body.casts[0].social_x,'');
+ assert.equal((await req('viewer',input)).status,403);
 });

@@ -99,6 +99,13 @@
       "when": 1794617969596,
       "tag": "0013_stripe_sandbox",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1794709383358,
+      "tag": "0014_shift_ranges_and_socials",
+      "breakpoints": true
     }
   ]
 }

@@ -177,3 +177,15 @@ button,a,input,select,textarea{-webkit-tap-highlight-color:transparent}
 .fan-count strong{font:44px Georgia,serif;margin-right:8px;color:#9d3d63}
 .fan-names{list-style:none;padding:0;display:flex;flex-wrap:wrap;gap:10px}
 .fan-names li{padding:10px 16px;border:1px solid var(--line);border-radius:24px;background:#fff8fb;overflow-wrap:anywhere}
+
+.shift-range-fields{display:grid;grid-template-columns:2fr 1fr 1fr;gap:16px}
+.shift-range-summary{margin:12px 0;color:#973b62;font-size:20px;font-weight:600}
+.social-editor{border:1px solid var(--line);border-radius:18px;padding:20px;margin:24px 0;min-width:0}
+.social-editor legend{font-size:18px;font-weight:600;padding:0 8px}
+.social-field{display:grid;grid-template-columns:110px minmax(0,1fr);gap:14px;align-items:center}
+.social-label{font-weight:600}
+.cast-social-links{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}
+.social-link{display:inline-flex;gap:14px;align-items:center;padding:10px 16px;border:1px solid var(--line);border-radius:24px;background:white;font-weight:600;font-size:13px}
+.social-link:hover{background:#f8e8ef;border-color:#bb7190}
+.social_instagram{color:#a33878}.social_youtube{color:#b23341}.social_tiktok,.social_x{color:#332e36}
+@media(max-width:640px){.shift-range-fields{grid-template-columns:1fr 1fr}.shift-range-fields>label:first-child{grid-column:1/-1}.social-field{grid-template-columns:1fr;gap:4px}.social-editor{padding:14px}.price-line{flex-wrap:wrap;gap:12px}}
