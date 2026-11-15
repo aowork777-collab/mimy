@@ -28,3 +28,7 @@
 5. iPhone/Androidでも入力時のズーム、キーボード、横スクロールを確認します。
 
 料金・同意チェック・送信条件は既存の実装を使用します。CSSだけで操作を有効化しないでください。
+
+## SNSアイコン
+
+キャストのプロフィールに登録済みのSNSを円形ボタンで表示し、編集画面では同じアイコンとサービス名を併記します。アイコンのSVGは [Simple Icons 15.0.0](https://github.com/simple-icons/simple-icons/tree/15.0.0/icons) を元に `public/social-icons/` へ配置しています。[ライセンス](https://github.com/simple-icons/simple-icons/blob/15.0.0/LICENSE.md)
