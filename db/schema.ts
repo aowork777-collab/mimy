@@ -1,55 +1,231 @@
 import { sql } from 'drizzle-orm';
 import { sqliteTable, text, integer, uniqueIndex, index } from 'drizzle-orm/sqlite-core';
 export const bookings = sqliteTable('bookings', {
- id:text('id').primaryKey(), owner:text('owner').notNull(), cast:text('cast').notNull(), slot:text('slot').notNull(), course:text('course').notNull(), minutes:integer('minutes').notNull(), price:integer('price').notNull(), status:text('status').notNull(), payment:text('payment').notNull(), expires:integer('expires').notNull(), created:integer('created').notNull(), terms:text('terms').notNull()
+  id: text('id').primaryKey(),
+  owner: text('owner').notNull(),
+  cast: text('cast').notNull(),
+  slot: text('slot').notNull(),
+  course: text('course').notNull(),
+  minutes: integer('minutes').notNull(),
+  price: integer('price').notNull(),
+  status: text('status').notNull(),
+  payment: text('payment').notNull(),
+  expires: integer('expires').notNull(),
+  created: integer('created').notNull(),
+  terms: text('terms').notNull(),
 });
-export const locks = sqliteTable('slot_locks',{id:text('id').primaryKey(), owner:text('owner').notNull(), cast:text('cast').notNull(), slot:text('slot').notNull(), booking:text('booking').notNull()}, t=>[uniqueIndex('unique_slot').on(t.owner,t.cast,t.slot)]);
-export const messages = sqliteTable('messages',{id:text('id').primaryKey(),owner:text('owner').notNull(),booking:text('booking').notNull(),role:text('role').notNull(),body:text('body').notNull(),created:integer('created').notNull()});
-export const events = sqliteTable('events',{id:text('id').primaryKey(),owner:text('owner').notNull(),booking:text('booking').notNull(),type:text('type').notNull(),created:integer('created').notNull()});
-export const reports = sqliteTable('reports',{id:text('id').primaryKey(),owner:text('owner').notNull(),booking:text('booking').notNull(),body:text('body').notNull(),created:integer('created').notNull()});
+export const locks = sqliteTable(
+  'slot_locks',
+  {
+    id: text('id').primaryKey(),
+    owner: text('owner').notNull(),
+    cast: text('cast').notNull(),
+    slot: text('slot').notNull(),
+    booking: text('booking').notNull(),
+  },
+  (t) => [uniqueIndex('unique_slot').on(t.owner, t.cast, t.slot)],
+);
+export const messages = sqliteTable('messages', {
+  id: text('id').primaryKey(),
+  owner: text('owner').notNull(),
+  booking: text('booking').notNull(),
+  role: text('role').notNull(),
+  body: text('body').notNull(),
+  created: integer('created').notNull(),
+});
+export const events = sqliteTable('events', {
+  id: text('id').primaryKey(),
+  owner: text('owner').notNull(),
+  booking: text('booking').notNull(),
+  type: text('type').notNull(),
+  created: integer('created').notNull(),
+});
+export const reports = sqliteTable('reports', {
+  id: text('id').primaryKey(),
+  owner: text('owner').notNull(),
+  booking: text('booking').notNull(),
+  body: text('body').notNull(),
+  created: integer('created').notNull(),
+});
 
 // V2: real account boundaries. Legacy sandbox tables above remain untouched.
-export const members = sqliteTable('members',{id:text('id').primaryKey(),name:text('name').notNull(),role:text('role').notNull().default('user'),blocked:integer('blocked').notNull().default(0),blockReason:text('block_reason').notNull().default(''),adminProtected:integer('admin_protected').notNull().default(0),created:integer('created').notNull()});
-export const castProfiles = sqliteTable('cast_profiles',{pricingTier:text('pricing_tier').notNull().default('new'),id:text('id').primaryKey().references(()=>members.id),name:text('name').notNull(),bio:text('bio').notNull(),headline:text('headline').notNull().default(''),photoUrl:text('photo_url').notNull().default(''),topics:text('topics').notNull().default(''),hobbies:text('hobbies').notNull().default(''),style:text('style').notNull().default(''),socialX:text('social_x').notNull().default(''),socialInstagram:text('social_instagram').notNull().default(''),socialTiktok:text('social_tiktok').notNull().default(''),socialYoutube:text('social_youtube').notNull().default(''),status:text('status').notNull().default('pending')});
-export const shifts = sqliteTable('shifts',{id:text('id').primaryKey(),castId:text('cast_id').notNull().references(()=>members.id),starts:integer('starts').notNull(),ends:integer('ends').notNull().default(0),enabled:integer('enabled').notNull().default(1)},t=>[uniqueIndex('cast_hour').on(t.castId,t.starts)]);
-export const reservations = sqliteTable('reservations',{id:text('id').primaryKey(),customer:text('customer').notNull().references(()=>members.id),castId:text('cast_id').notNull().references(()=>members.id),shiftId:text('shift_id').notNull().references(()=>shifts.id),starts:integer('starts').notNull().default(0),minutes:integer('minutes').notNull(),price:integer('price').notNull(),course:text('course').notNull(),status:text('status').notNull(),expires:integer('expires').notNull(),created:integer('created').notNull(),testPaidAt:integer('test_paid_at'),
- paymentProvider:text('payment_provider').notNull().default('demo'),
- stripeSessionId:text('stripe_session_id'),
- stripeCheckoutExpires:integer('stripe_checkout_expires'),
- stripePaymentIntent:text('stripe_payment_intent'),
- stripePaidAt:integer('stripe_paid_at')
-},t=>[uniqueIndex('reservations_stripe_session').on(t.stripeSessionId),index('reservations_customer_created').on(t.customer,t.created),index('reservations_cast_created').on(t.castId,t.created),index('reservations_cast_starts').on(t.castId,t.starts),index('reservations_customer_starts').on(t.customer,t.starts)]);
-export const conversationMessages = sqliteTable('conversation_messages',{id:text('id').primaryKey(),reservation:text('reservation').notNull().references(()=>reservations.id),sender:text('sender').notNull().references(()=>members.id),body:text('body').notNull(),created:integer('created').notNull()},t=>[index('message_sender_created').on(t.sender,t.created)]);
-export const auditEvents = sqliteTable('audit_events',{id:text('id').primaryKey(),actor:text('actor').notNull(),target:text('target').notNull(),action:text('action').notNull(),created:integer('created').notNull()},t=>[index('audit_events_target_action').on(t.target,t.action)]);
-export const adminInvites=sqliteTable('admin_invites',{id:text('id').primaryKey(),hash:text('hash').notNull().unique(),email:text('email').notNull(),creator:text('creator').notNull(),created:integer('created').notNull(),expires:integer('expires').notNull(),acceptedBy:text('accepted_by'),acceptedAt:integer('accepted_at'),revoked:integer('revoked').notNull().default(0)});
+export const members = sqliteTable('members', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  role: text('role').notNull().default('user'),
+  blocked: integer('blocked').notNull().default(0),
+  blockReason: text('block_reason').notNull().default(''),
+  adminProtected: integer('admin_protected').notNull().default(0),
+  created: integer('created').notNull(),
+});
+export const castProfiles = sqliteTable('cast_profiles', {
+  pricingTier: text('pricing_tier').notNull().default('new'),
+  id: text('id')
+    .primaryKey()
+    .references(() => members.id),
+  name: text('name').notNull(),
+  bio: text('bio').notNull(),
+  headline: text('headline').notNull().default(''),
+  photoUrl: text('photo_url').notNull().default(''),
+  topics: text('topics').notNull().default(''),
+  hobbies: text('hobbies').notNull().default(''),
+  style: text('style').notNull().default(''),
+  socialX: text('social_x').notNull().default(''),
+  socialInstagram: text('social_instagram').notNull().default(''),
+  socialTiktok: text('social_tiktok').notNull().default(''),
+  socialYoutube: text('social_youtube').notNull().default(''),
+  status: text('status').notNull().default('pending'),
+});
+export const shifts = sqliteTable(
+  'shifts',
+  {
+    id: text('id').primaryKey(),
+    castId: text('cast_id')
+      .notNull()
+      .references(() => members.id),
+    starts: integer('starts').notNull(),
+    ends: integer('ends').notNull().default(0),
+    enabled: integer('enabled').notNull().default(1),
+  },
+  (t) => [uniqueIndex('cast_hour').on(t.castId, t.starts)],
+);
+export const reservations = sqliteTable(
+  'reservations',
+  {
+    id: text('id').primaryKey(),
+    customer: text('customer')
+      .notNull()
+      .references(() => members.id),
+    castId: text('cast_id')
+      .notNull()
+      .references(() => members.id),
+    shiftId: text('shift_id')
+      .notNull()
+      .references(() => shifts.id),
+    starts: integer('starts').notNull().default(0),
+    minutes: integer('minutes').notNull(),
+    price: integer('price').notNull(),
+    course: text('course').notNull(),
+    status: text('status').notNull(),
+    expires: integer('expires').notNull(),
+    created: integer('created').notNull(),
+    testPaidAt: integer('test_paid_at'),
+    paymentProvider: text('payment_provider').notNull().default('demo'),
+    stripeSessionId: text('stripe_session_id'),
+    stripeCheckoutExpires: integer('stripe_checkout_expires'),
+    stripePaymentIntent: text('stripe_payment_intent'),
+    stripePaidAt: integer('stripe_paid_at'),
+  },
+  (t) => [
+    uniqueIndex('reservations_stripe_session').on(t.stripeSessionId),
+    index('reservations_customer_created').on(t.customer, t.created),
+    index('reservations_cast_created').on(t.castId, t.created),
+    index('reservations_cast_starts').on(t.castId, t.starts),
+    index('reservations_customer_starts').on(t.customer, t.starts),
+  ],
+);
+export const conversationMessages = sqliteTable(
+  'conversation_messages',
+  {
+    id: text('id').primaryKey(),
+    reservation: text('reservation')
+      .notNull()
+      .references(() => reservations.id),
+    sender: text('sender')
+      .notNull()
+      .references(() => members.id),
+    body: text('body').notNull(),
+    created: integer('created').notNull(),
+  },
+  (t) => [index('message_sender_created').on(t.sender, t.created)],
+);
+export const auditEvents = sqliteTable(
+  'audit_events',
+  {
+    id: text('id').primaryKey(),
+    actor: text('actor').notNull(),
+    target: text('target').notNull(),
+    action: text('action').notNull(),
+    created: integer('created').notNull(),
+  },
+  (t) => [index('audit_events_target_action').on(t.target, t.action)],
+);
+export const adminInvites = sqliteTable('admin_invites', {
+  id: text('id').primaryKey(),
+  hash: text('hash').notNull().unique(),
+  email: text('email').notNull(),
+  creator: text('creator').notNull(),
+  created: integer('created').notNull(),
+  expires: integer('expires').notNull(),
+  acceptedBy: text('accepted_by'),
+  acceptedAt: integer('accepted_at'),
+  revoked: integer('revoked').notNull().default(0),
+});
 
 // Verified Supabase identities map to stable member IDs; no passwords are stored in D1.
-export const authIdentities=sqliteTable('auth_identities',{authId:text('auth_id').primaryKey(),memberId:text('member_id').notNull().unique(),created:integer('created').notNull(),verifiedEmail:text('verified_email')});
-export const authRateLimits=sqliteTable('auth_rate_limits',{key:text('key').primaryKey(),bucket:integer('bucket').notNull(),count:integer('count').notNull()});
-
-export const guestProfiles=sqliteTable('guest_profiles',{
- id:text('id').primaryKey().references(()=>members.id),
- bio:text('bio').notNull().default(''),
- topics:text('topics').notNull().default(''),
- style:text('style').notNull().default('')
+export const authIdentities = sqliteTable('auth_identities', {
+  authId: text('auth_id').primaryKey(),
+  memberId: text('member_id').notNull().unique(),
+  created: integer('created').notNull(),
+  verifiedEmail: text('verified_email'),
 });
-export const diaryPhotos=sqliteTable('diary_photos',{
- id:text('id').primaryKey(),
- owner:text('owner').notNull().references(()=>members.id),
- created:integer('created').notNull()
-},t=>[index('diary_photos_owner_created').on(t.owner,t.created)]);
-export const castFavorites=sqliteTable('cast_favorites',{
- memberId:text('member_id').notNull().references(()=>members.id),
- castId:text('cast_id').notNull().references(()=>members.id),
- created:integer('created').notNull()
-},t=>[uniqueIndex('cast_favorites_pair').on(t.memberId,t.castId),index('cast_favorites_cast').on(t.castId,t.created)]);
-export const castPosts=sqliteTable('cast_posts',{
- id:text('id').primaryKey(),
- castId:text('cast_id').notNull().references(()=>members.id),
- title:text('title').notNull(),
- body:text('body').notNull(),
- created:integer('created').notNull(),
- updated:integer('updated').notNull(),
- visibility:text('visibility').notNull().default('public'),
- photoId:text('photo_id').references(()=>diaryPhotos.id)
-},t=>[index('cast_posts_cast_created').on(t.castId,t.created),uniqueIndex('cast_posts_unique_photo').on(t.photoId)]);
+export const authRateLimits = sqliteTable('auth_rate_limits', {
+  key: text('key').primaryKey(),
+  bucket: integer('bucket').notNull(),
+  count: integer('count').notNull(),
+});
+
+export const guestProfiles = sqliteTable('guest_profiles', {
+  id: text('id')
+    .primaryKey()
+    .references(() => members.id),
+  bio: text('bio').notNull().default(''),
+  topics: text('topics').notNull().default(''),
+  style: text('style').notNull().default(''),
+});
+export const diaryPhotos = sqliteTable(
+  'diary_photos',
+  {
+    id: text('id').primaryKey(),
+    owner: text('owner')
+      .notNull()
+      .references(() => members.id),
+    created: integer('created').notNull(),
+  },
+  (t) => [index('diary_photos_owner_created').on(t.owner, t.created)],
+);
+export const castFavorites = sqliteTable(
+  'cast_favorites',
+  {
+    memberId: text('member_id')
+      .notNull()
+      .references(() => members.id),
+    castId: text('cast_id')
+      .notNull()
+      .references(() => members.id),
+    created: integer('created').notNull(),
+  },
+  (t) => [
+    uniqueIndex('cast_favorites_pair').on(t.memberId, t.castId),
+    index('cast_favorites_cast').on(t.castId, t.created),
+  ],
+);
+export const castPosts = sqliteTable(
+  'cast_posts',
+  {
+    id: text('id').primaryKey(),
+    castId: text('cast_id')
+      .notNull()
+      .references(() => members.id),
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    created: integer('created').notNull(),
+    updated: integer('updated').notNull(),
+    visibility: text('visibility').notNull().default('public'),
+    photoId: text('photo_id').references(() => diaryPhotos.id),
+  },
+  (t) => [
+    index('cast_posts_cast_created').on(t.castId, t.created),
+    uniqueIndex('cast_posts_unique_photo').on(t.photoId),
+  ],
+);
