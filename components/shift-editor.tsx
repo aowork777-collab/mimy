@@ -6,23 +6,37 @@ export function ShiftEditor({
   onSave,
 }: {
   busy: boolean;
-  onSave: (starts: number, ends: number) => Promise<boolean>;
+  onSave: (starts: number, ends: number) => Promise<{ error?: string } | null>;
 }) {
   const [day, setDay] = useState('');
   const [startTime, setStartTime] = useState('20:00');
   const [endTime, setEndTime] = useState('22:00');
   const [error, setError] = useState('');
+  const [saved, setSaved] = useState('');
   const overnight = endTime <= startTime;
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
-    const starts = Date.parse(day + 'T' + startTime + ':00+09:00');
-    const ends = Date.parse(day + 'T' + endTime + ':00+09:00') + (overnight ? 86400000 : 0);
+    setSaved('');
+    const starts = Date.parse(day + 'T' + startTime + (startTime.length === 5 ? ':00' : '') + '+09:00');
+    const ends = Date.parse(day + 'T' + endTime + (endTime.length === 5 ? ':00' : '') + '+09:00') + (overnight ? 86400000 : 0);
     if (!Number.isFinite(starts) || starts % 1800000 !== 0 || ends % 1800000 !== 0) {
       setError('開始・終了時刻は00分または30分を選んでください。');
       return;
     }
-    await onSave(starts, ends);
+    try {
+      const result = await onSave(starts, ends);
+      if (!result || result.error) {
+        setError(result?.error || '登録できませんでした。入力内容を確認して再度お試しください。');
+        return;
+      }
+      const format = (time: number) => new Date(time).toLocaleString('ja-JP', {
+        timeZone: 'Asia/Tokyo', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit',
+      });
+      setSaved(`${format(starts)} 〜 ${format(ends)} のシフトを登録しました。下の「登録したシフト」で確認できます。`);
+    } catch {
+      setError('通信に失敗しました。登録したシフトを確認してから再度お試しください。');
+    }
   }
   return (
     <section className="panel">
@@ -68,6 +82,7 @@ export function ShiftEditor({
           {endTime}
         </p>
         <p className="muted">この範囲内で、空いている30分・60分の会話を受け付けます。</p>
+        {saved && <p className="notice" role="status">{saved}</p>}
         {error && (
           <p className="alert" role="alert">
             {error}

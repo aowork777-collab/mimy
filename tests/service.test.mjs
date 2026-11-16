@@ -1405,3 +1405,21 @@ test('social profiles accept IDs and official URLs, preserve omitted fields and 
   assert.equal((await req('viewer')).body.casts[0].social_x, '');
   assert.equal((await req('viewer', input)).status, 403);
 });
+
+test('an ongoing shift exposes future bookable starts and rejects a range with no remaining time', async () => {
+  const { req } = setup();
+  await req('cast', { action: 'apply', name: 'cast', bio: '紹介' });
+  await req('owner', { action: 'review', target: 'cast', decision: 'approve' });
+  const half = 1800000;
+  const start = Math.floor(Date.now() / half) * half - half;
+  const ends = start + 6 * half;
+  assert.equal((await req('cast', { action: 'shiftAdd', starts: start, ends })).status, 200);
+  const slots = (await req('alice')).body.shifts;
+  assert.ok(slots.length > 0);
+  assert.ok(slots.every(slot => slot.starts > Date.now() + 15 * 60000 && slot.starts + half <= ends));
+  assert.equal((await req('alice', {
+    action: 'reserve', shiftId: slots[0].id, starts: slots[0].starts,
+    minutes: 30, course: '雑談', agree: true,
+  })).status, 200);
+  assert.equal((await req('cast', { action: 'shiftAdd', starts: start - 6 * half, ends: start })).status, 400);
+});

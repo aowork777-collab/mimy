@@ -731,12 +731,12 @@ export async function handleWorkspace(
             Number.isSafeInteger(ends) &&
             a.starts % 1800000 === 0 &&
             ends % 1800000 === 0 &&
-            a.starts > now + 900000 &&
+            Math.max(a.starts, (Math.floor(minStart / 1800000) + 1) * 1800000) + 1800000 <= ends &&
             ends > a.starts &&
             ends - a.starts <= 86400000 &&
             ends < now + 90 * 86400000,
           400,
-          '90日以内・30分単位で、開始から24時間以内の終了時刻を指定してください',
+          `開始・終了は30分単位、時間帯は24時間以内・90日以内で指定してください。現在から${stripeEnabled ? checkoutWindowMinutes + 10 : 15}分より後に開始できる30分以上の空き時間が必要です。`,
         );
         await db.batch([
           q(

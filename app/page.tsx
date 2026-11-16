@@ -188,7 +188,7 @@ export default function Home({
       return d;
     } catch (e) {
       setError((e as Error).message);
-      return null;
+      return payload.action === 'shiftAdd' ? { error: (e as Error).message } : null;
     } finally {
       setBusy(false);
     }
@@ -660,7 +660,7 @@ export default function Home({
               </section>
               <ShiftEditor
                 busy={busy}
-                onSave={async (starts, ends) => !!(await act({ action: 'shiftAdd', starts, ends }))}
+                onSave={async (starts, ends) => act({ action: 'shiftAdd', starts, ends })}
               />
               <section className="panel">
                 <h3>登録したシフト</h3>
