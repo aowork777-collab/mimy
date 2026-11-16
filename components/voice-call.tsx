@@ -238,7 +238,7 @@ export function VoiceCall({ id, starts, minutes, status, configured }: Props) {
         <strong>ビデオ・音声通話</strong>
         <p>
           {!configured
-            ? '準備中：運営による無料プランの接続設定が必要です。'
+            ? '通話の接続設定が完了していません。運営にお問い合わせください。'
             : connected
               ? peers
                 ? '通話中'

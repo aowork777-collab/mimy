@@ -40,7 +40,7 @@ export async function guardRequest(env: GuardEnv, action: 'schedule' | 'close', 
     },
     body: JSON.stringify(job),
     signal: AbortSignal.timeout(8000),
-    redirect: 'error',
+    redirect: 'manual',
   });
   if (!r.ok) throw Error('通話終了サーバーに登録できません');
 }
