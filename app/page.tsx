@@ -313,12 +313,13 @@ export default function Home({
                     <br />
                     <em>ちょっと、ときめく。</em>
                   </h1>
-                  <p>
-                    今日あったことでも
-                    <br/>
-                    最近ハマってることでも
-                    <br />
-                    気になる相手と、少しおしゃべりしませんか？
+                  <p className="hero-description">
+                    <span>今日あったことでも</span>
+                    <span>最近ハマってることでも</span>
+                    <span>
+                      気になる相手と、
+                      <span className="hero-description-ending">少しおしゃべりしませんか？</span>
+                    </span>
                   </p>
                   <a href="#partners" className="primary">
                     話し相手を見つける <ArrowRight size={18} />
