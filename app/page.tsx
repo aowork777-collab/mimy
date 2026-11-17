@@ -341,7 +341,7 @@ export default function Home({
                   <span>02</span>
                   <MessageCircle />
                   <p>
-                    あなたのペースで。<small>雑談も、会話の練習も</small>
+                    あなたのペースで。<small>好きな話題で、気軽におしゃべり</small>
                   </p>
                 </div>
                 <div>
