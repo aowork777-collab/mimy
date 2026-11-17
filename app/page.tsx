@@ -314,9 +314,11 @@ export default function Home({
                     <em>ちょっと、ときめく。</em>
                   </h1>
                   <p>
-                    眠る前の雑談も、会話の小さな練習も。
+                    今日あったことでも
+                    <br/>
+                    最近ハマってることでも
                     <br />
-                    今日のあなたを、誰かに話してみませんか。
+                    気になる相手と、少しおしゃべりしませんか？
                   </p>
                   <a href="#partners" className="primary">
                     話し相手を見つける <ArrowRight size={18} />
@@ -348,7 +350,7 @@ export default function Home({
                   <span>03</span>
                   <Moon />
                   <p>
-                    ふたりだけの時間。<small>18歳以上・予約制</small>
+                    ふたりだけの時間。<small>	30分・60分の予約制</small>
                   </p>
                 </div>
               </div>
